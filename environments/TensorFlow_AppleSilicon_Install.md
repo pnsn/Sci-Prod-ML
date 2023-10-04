@@ -27,7 +27,7 @@ Nathan Stevens:
 ntsteven@uw.edu
 
 ## References
-environment_AppleM1.yml install instructions based on: 
+environment_AppleM1.yml install instructions based on:  
 (1) https://gist.github.com/corajr/a10af2f893c4b79275281f6b6fd915d3  
 (2) https://caffeinedev.medium.com/how-to-install-tensorflow-on-m1-mac-8e9b91d93706  
 (3) https://github.com/conda-forge/miniforge  
