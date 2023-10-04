@@ -7,8 +7,8 @@ PNSN Science Products team Machine Learning workflows/utilities
  - Includes notes on environment installation on Apple M1/M2 chips (a `TensorFlow` concern).
 
 # Contact Info
-Supervisor: jrhartog@uw.edu
-Primary editor: ntsteven@uw.edu
+Supervisor: jrhartog@uw.edu  
+Primary editor: ntsteven@uw.edu  
 
 # Supporting Repositories
 ## SeisBench  
