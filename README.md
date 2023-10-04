@@ -2,6 +2,7 @@
 PNSN Science Products team Machine Learning workflows/utilities
 
 # Contact Info
+Supervisor: jrhartog@uw.edu
 Primary editor: ntsteven@uw.edu
 
 # Supporting Repositories
