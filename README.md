@@ -1,20 +1,33 @@
 # Sci-Prod-ML
 PNSN Science Products team Machine Learning workflows/utilities
 
+# Installation
+This repository currently uses a minimal installation of `SeisBench` that can be installed via `conda` by invoking: 
+
+`conda create -f environments/seisbench_lite_env.yml`  
+
+Testing on Apple M1/M2 chipsets suggests the following modified invocation is needed for a successful installation:  
+
+`CONDA_SUBDIR=osx-arm64 conda env create -f environments/seisbench_lite_env.yml`
+
 # Contents
 ### environments/
- - Instructions for building conda environments for ML workflows in this repository.
- - Includes notes on environment installation on Apple M1/M2 chips (a `TensorFlow` concern).
+ - Contains YAML files and notes on environment installation
+
+### examples/
+ - Contains Jupyter notebooks documenting "toy" workflow elements.
 
 # Contact Info
 Supervisor: jrhartog@uw.edu  
 Primary editor: ntsteven@uw.edu  
 
 # Supporting Repositories
-### SeisBench  
+### SeisBench  - ML workflow benchmarking
 https://github.com/seisbench/seisbench
-### PNW-ML
+### PNW-ML - utilities for PNW Store
 https://github.com/niyiyu/PNW-ML
+### libcomcat - COMCAT query tools
+https://code.usgs.gov/ghsc/esi/libcomcat-python  
 
 # References
 #### SeisBench
