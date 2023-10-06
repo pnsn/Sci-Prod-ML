@@ -1,2 +1,4 @@
 examples/data/*/*.mseed
 examples/data/GHOST_1210_Example
+*.xml
+*.mseed
