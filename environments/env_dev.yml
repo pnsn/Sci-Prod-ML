@@ -1,0 +1,11 @@
+name: seisbench_lite
+channels:
+  - conda-forge
+  - pytorch
+dependencies:
+  - python==3.11
+  - plotly
+  - pip
+  - pip:
+      - setuptools
+      - seisbench
