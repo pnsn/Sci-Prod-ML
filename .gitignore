@@ -1,4 +1,4 @@
-examples/data/*/*.mseed
+examples/data/*/PNW*
 examples/data/GHOST_1210_Example
 *.xml
 *.mseed
