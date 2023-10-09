@@ -6,6 +6,8 @@
 :org: Pacific Northwest Seismic Network
 """
 import pyrocko.gui.marker as pm
+from obspy.core.utcdatetime import UTCDateTime
+from pandas import Timestamp
 
 
 def sbm2spm(picks, nslc, method='bounds', kind=0, pick_fmt='%s'):
@@ -76,3 +78,33 @@ def sb_pred_st2sf_st(stream, mapping=full_mapping()):
             tr_.stats.channel = tr_.stats.channel[:3]
 
     return st_out
+
+
+
+def extract_timestamp(pick_object):
+    """
+    Extract an epoch timestamp from a variety of pick object formats
+    :: INPUT ::
+    :param pick_object: Currently handles:
+                        obspy.core.utcdatetime.UTCDateTime
+                        pandas._libs.tslibs.timestamps.Timestamp
+                        pyrocko.gui.markers.Marker (and child-classes)
+    :: OUTPUT ::
+    :return time: [float] epoch time
+    """
+    if isinstance(pick_object,UTCDateTime):
+        time = pick_object.timestamp
+    elif isinstance(pick_object,Timestamp):
+        time = pick_object.timestamp()
+    elif isinstance(pick_object,pm.Marker):
+        time1 = pick_object.get_tmin()
+        time2 = pick_object.get_tmax()
+        if time1 == time2:
+            time = time1
+        else:
+            time = (time1 + time2)/2
+    else:
+        print('Input object of type %s not handled by this method'%(str(type(pick_object))))
+        time = False
+    return time
+
