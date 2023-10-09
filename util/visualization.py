@@ -7,7 +7,7 @@
 """
 import matplotlib.pyplot as plt
 import plotly.express as px
-from .translate import extract_timestamp
+from .translate import extract_timestamp, UTCDateTime
 
 
 def plot_picks(ax,trace,pick_object):
