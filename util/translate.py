@@ -1,5 +1,5 @@
 """
-:module: translate.py
+:module: util.translate
 :purpose: contain utilities for translating data formats. 
 :auth: Nathan T. Stevens
 :email: ntsteven@uw.edu
@@ -48,7 +48,7 @@ def full_mapping():
                 'EQTransformer_Detection': 'ETD',
                 'PhaseNet_P': 'PNP',
                 'PhaseNet_S': 'PNS',
-                'PhaseNet_Detection': 'PND'}
+                'PhaseNet_N': 'PNN'}
     return mapping
 
 def sb_pred_st2sf_st(stream, mapping=full_mapping()):
