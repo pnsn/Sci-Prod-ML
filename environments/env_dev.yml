@@ -1,11 +1,18 @@
-name: seisbench_lite
+name: pnsn_ml_dev
 channels:
   - conda-forge
   - pytorch
+  - anaconda
+  - apple
+  - pytorch
+
 dependencies:
-  - python==3.11
+  - python
   - plotly
+  - mysql-connector-python
+  - ipython
   - pip
   - pip:
       - setuptools
       - seisbench
+      - pyrocko
