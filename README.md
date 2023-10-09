@@ -26,6 +26,7 @@ Primary editor: ntsteven@uw.edu
 https://github.com/seisbench/seisbench
 ### PNW-ML - utilities for PNW Store
 https://github.com/niyiyu/PNW-ML
+https://github.com/niyiyu/pnwstore
 ### libcomcat - COMCAT query tools
 https://code.usgs.gov/ghsc/esi/libcomcat-python  
 
