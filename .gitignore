@@ -3,3 +3,5 @@ examples/data/GHOST_1210_Example
 *.xml
 *.mseed
 __pycache__
+visualizations/fixed_map.png
+visualizations/interactive_station_map.html
