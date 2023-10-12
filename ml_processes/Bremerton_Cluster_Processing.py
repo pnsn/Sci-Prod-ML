@@ -7,7 +7,7 @@
 """
 import os
 import sys
-from seisbench.models import EQTransformer, WaveformModel, PhaseNet
+from seisbench.models import EQTransformer, WaveformModel
 from glob import glob
 from obspy import read
 from tqdm import tqdm
@@ -16,12 +16,16 @@ import util.translate as ut
 import util.preprocess as up
 import pickle
 
+
+annotate_kwargs = {'parallelism':None}
+
 # Define data directory absolute path
 # presently a local copy of Bremerton-proximal station data on N. Stevens' external HDD
 DATA_ROOT = '/Volumes/LaCie/PNW_Store_Local'
 # Define output directory path
 OUT_ROOT = os.path.join('/Volumes', 'LaCie', 'PNW_Store_Local', 'ml_pred_PNW2017')
-OUT_FILE_FSTR = os.path.join(OUT_ROOT,'{NET}','{YEAR}','{JDAY}','{STA}.{NET}.{YEAR}.{JDAY}.{LOC}.{BI_ID}.{FMT}')
+OUT_FILE_FSTR = os.path.join(OUT_ROOT, '{NET}', '{YEAR}', '{JDAY}', 
+                             '{STA}.{NET}.{YEAR}.{JDAY}.{LOC}.{BI_ID}.{FMT}')
 # Get file list from disk
 flist = glob(os.path.join(DATA_ROOT, 'PNW2017', '*', '2017', '131', '*'))
 flist.sort()
@@ -49,7 +53,7 @@ dthresh = 0.7
 save_fmt = 'MSEED'
 
 # Iterate through day_volume files
-for f_ in tqdm(flist[:3]):
+for f_ in tqdm(flist[1:5]):
     # Read in data
     stream = read(f_)
     # Merge data
@@ -66,7 +70,7 @@ for f_ in tqdm(flist[:3]):
             train_name = model_key
 
             # Conduct probabalistic prediction
-            ann_stream = model.annotate(BI_stream)
+            ann_stream = model.annotate(BI_stream,**annotate_kwargs)
             
             # Get picks from annotations given a particular threshold
             wfm = WaveformModel(model)
