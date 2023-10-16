@@ -53,7 +53,7 @@ dthresh = 0.7
 save_fmt = 'MSEED'
 
 # Iterate through day_volume files
-for f_ in tqdm(flist[1:5]):
+for f_ in tqdm(flist[6:]):
     # Read in data
     stream = read(f_)
     # Merge data
