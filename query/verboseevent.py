@@ -430,7 +430,7 @@ class VerboseEvent:
             if isinstance(self.phase,pd.DataFrame):
                 # Conduct a check to not duplicate net/station/instrument-type entries
                 nsi_list = []
-                for _c in self.phase['Channel'].unique()
+                for _c in self.phase['Channel'].unique():
                     _nscl = _c.split('.')
                     # Compose a wildcard version of NSLC
                     _nslc = [_nscl[0], _nscl[1], '*', _nscl[2][:2]+'?']
@@ -443,7 +443,7 @@ class VerboseEvent:
                         # Append station inventory to self.inventory
                         self.inventory += client.get_stations(**knslc)
             elif isinstance(self.waveforms,Stream):
-
+                pass
 
     ### PYROCKO EXTENSIONS ###
 
@@ -552,11 +552,9 @@ class VerboseCatalog:
     and visualization methods operating on structured data contained within 
     a list of VerboseEvent objects.
     """
-    def __init__(self, verbose_catalog_list=[]):
-
+    def __init__(self, verbose_catalog_list):
         ## Define initial class structure
-        self.events=[]
-        self.summary=pd.DataFrame(columns=["Evid","Magnitude","Magnitude Type",
+        self.summary = pd.DataFrame(columns=["Evid","Magnitude","Magnitude Type",
                                               "Epoch(UTC)","Time UTC","Time Local",
                                               "Distance From","Lat","Lon","Depth Km",
                                               "Depth Mi",
@@ -564,31 +562,34 @@ class VerboseCatalog:
 
         ## Do some data characterization/sanity checks during instantiation
         if ~isinstance(verbose_catalog_list, list) and isinstance(verbose_catalog_list, VerboseCatalog):
-            self.events=list(verbose_catalog_list)
+            self.events = list(verbose_catalog_list)
         elif isinstance(verbose_catalog_list, list):
             # Do sanity check on all elements of list
-            self.events=[ve for ve in verbose_catalog_list if isinstance(ve,VerboseEvent)]
+            self.events = verbose_catalog_list
+            #[ve for ve in verbose_catalog_list if isinstance(ve, VerboseEvent)]
 
 
-        holder=[]
+        holder = []
         for _i, _ve in enumerate(self.events):
             # Do dataframe summary of events in PNSN standard EVENT table format
-            line=[_ve.id, _ve.magnitude, _ve['magType'][1:],
-                    _ve.time.timestamp(), _ve.time, pd.NaT,
-                    _ve['title'], _ve.latitude, _ve.longitude, _ve.depth,
-                    _ve.depth*1e3*3.281/5280.,
-                    isinstance(_ve.event,DetailEvent), isinstance(_ve.history,pd.DataFrame),
-                    isinstance(_ve.phase,pd.DataFrame), isinstance(_ve.waveform,Stream),
-                    isinstance(_ve.inventory,Inventory)]
+            line=[_ve.event.id, _ve.event.magnitude, _ve.event['magType'][1:],
+                    _ve.event.time.timestamp(), _ve.event.time, pd.NaT,
+                    _ve.event['title'], _ve.event.latitude, _ve.event.longitude, _ve.event.depth,
+                    _ve.event.depth*1e3*3.281/5280.,
+                    isinstance(_ve.event, DetailEvent),
+                    isinstance(_ve.history, pd.DataFrame),
+                    isinstance(_ve.phase, pd.DataFrame),
+                    isinstance(_ve.waveforms, Stream),
+                    isinstance(_ve.inventory, Inventory)]
 
             holder.append(line)
         # Update Dataframe
-        self.summary=pd.DataFrame(holder, columns=self.summary.columns)
+        self.summary = pd.DataFrame(holder, columns=self.summary.columns)
 
 
     def __repr__(self):
         nentries=len(self.summary)
-        repr_str= f"=== Events:      {self.summary['event'].sum()} ===\n"
+        repr_str= f"=== Events:      {self.summary['event'].sum()}/{nentries} ===\n"
         repr_str += f"=== Histories:   {self.summary['history'].sum()}/{nentries} ===\n"
         repr_str += f"=== Phases:      {self.summary['phase'].sum()}/{nentries} ===\n"
         repr_str += f"=== Waveforms:   {self.summary['waveform'].sum()}/{nentries} ===\n"
@@ -599,7 +600,7 @@ class VerboseCatalog:
     def populate_from_event_ids(self):
         for _ve in self.events:
             try: 
-                _ve.populate_from_evid(_ve.Event.id)
+                _ve.populate_from_evid(_ve.event.id)
             except:
                 pass
 
