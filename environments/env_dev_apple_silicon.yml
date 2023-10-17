@@ -1,0 +1,43 @@
+name: pnsn_ml_dev_apple
+channels:
+  - apple
+  - anaconda
+  - conda-forge
+  - pytorch
+
+dependencies:
+# Python environment
+  - python=3.9
+  - ipython
+  - pip
+  - jupyterlab
+# Data Manipulation
+  - numpy
+  - scipy
+  - pandas
+  - obspy
+# Data I/O
+  - netcdf4
+  - wget
+  - rasterio
+  - h5py
+  - zarr
+  - xarray
+# Plotting Utilities
+  - matplotlib
+  - plotly
+  - folium
+  - pyqt
+  - pyqtwebengine
+# ML Toolboxes
+  - scikit-learn
+  - tensorflow==2.9.1
+  - tensorflow-deps==2.9
+# PIP installs
+  - pip:
+      - setuptools
+      - seisbench
+      - pyrocko
+      - usgs-libcomcat
+      - tensorflow-macos
+      - tensorflow-metal
