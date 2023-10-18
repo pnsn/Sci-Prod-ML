@@ -6,3 +6,4 @@ __pycache__
 visualizations/fixed_map.png
 visualizations/interactive_station_map.html
 .DS_Store
+*phase.csv
