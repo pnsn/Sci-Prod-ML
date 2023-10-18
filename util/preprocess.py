@@ -45,7 +45,7 @@ def split_streams(stream):
     streams = {}
     for code in codes:
         sti = stream.select(channel=code+'?')
-        streams.update({code:sti})
+        streams.update({code: sti})
     return streams
 
 def order_traces(stream, order='ZNE', BIcode='??', mapping={'Z':'[Z3]','N':'[N1]','E':'[E2]'}):

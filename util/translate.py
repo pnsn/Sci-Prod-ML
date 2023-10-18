@@ -80,6 +80,7 @@ def sb_pred_st2sf_st(stream, mapping=full_mapping()):
 
     return st_out
 
+
 def relabel_annotations(stream, annotation, model, training_data_code):
     """
     Use a combination of an input stream, output annotated stream, ML model
