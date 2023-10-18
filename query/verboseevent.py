@@ -19,21 +19,25 @@
 
 
 :: NOTES / TODO ::
- - Merge in methods from util.translate as code refactoring to aid in 
+ - Merge in methods from util.translate as code refactoring to aid in
    stability of class-methods (NTS: 16. OCT '23)
+ - VerboseCatalog.__repr__ inputs are SUPER clunky -
 """
 # Import supporting modules
 import os
 import pandas as pd
-from obspy import UTCDateTime, Stream, Inventory
+from glob import glob
+from obspy import UTCDateTime, Stream, Inventory, read_inventory, read
 from obspy.clients.fdsn import Client
-from libcomcat.search import search, get_event_by_id
+from libcomcat.search import get_event_by_id
 from libcomcat.dataframes import get_phase_dataframe, get_history_data_frame
 from libcomcat.classes import DetailEvent, SummaryEvent
 from warnings import warn
 from requests.models import JSONDecodeError
 from tqdm import tqdm
 from pyrocko import obspy_compat
+import pyrocko.gui.marker as pm
+from pyrocko import model
 
 # from pyrocko.model import Event
 # import pyrocko.gui.marker as pm
@@ -131,62 +135,80 @@ class VerboseEvent:
 
         Structure:
             {evid}/
-                history/
-                    {evid}_history.csv 
-                        - via pandas.dataframe.DataFrame.to_csv({filename}),
-                                                                header=True,index=True)
-                phase/
-                    {evid}_phase.csv
-                        - via pandas.dataframe.DataFrame.to_csv({filename}),
-                                                                header=True,index=True)                
+                history.csv 
+                - via pandas.dataframe.DataFrame.to_csv({filename}),
+                                                        header=True,index=True)
+                phase.csv
+                - via pandas.dataframe.DataFrame.to_csv({filename}),
+                                                        header=True,index=True)                
                 waveforms/
                     {evid}.{net}.{sta}.mseed
                         - via waveform.select(network={net}, station={sta}).write(
                                 os.path.join(location,{evid},'waveforms',{filename})
                         )
-                inventory/
-                    {evid}_inv.xml
-                        - via obspy.core.inventory.Inventory.write({filename},fmt='station_xml')
+                inventory.xml
+                - via obspy.core.inventory.Inventory.write({filename},
+                                                           fmt='STATIONXML')
 
         """
         report = {}
         # Conduct work only if there is a valid event entry
         if isinstance(self.event, SummaryEvent) or isinstance(self.event, DetailEvent):
-            report.update({'Event': self.event})
+            report.update({'event': self.event})
             for _attr in self.attributes:
-                if _attr not in exclude and _attr == 'event':
-                    fpath=os.path.join(location, self.event.id,_attr)
-                    fsize_bytes=0
-                    try:
-                        os.makedirs(fpath)
-                    except FileExistsError:
-                        pass
+                if _attr not in exclude:
+                    if _attr == 'event':
+                        fpath = os.path.join(location, self.event.id)
+                        fsize_bytes = 0
+                        try:
+                            os.makedirs(fpath)
+                        except FileExistsError:
+                            pass
                     # Handle saving csv objects
                     if _attr in ['history', 'phase']:
-                        filename=f"{self.event.id}_{_attr}"
-                        self._attr.to_csv(os.path.join(fpath, filename),
-                                          header=True,index=True)
-                        fsize_bytes += os.path.getsize(os.path.join(fpath, filename))
+                        filename = f"{_attr}.csv"
+                        if _attr == 'history' and isinstance(self.history, pd.DataFrame):
+                            self.history.to_csv(os.path.join(fpath, filename),
+                                            header=True, index=True)
+                            fsize_bytes += os.path.getsize(os.path.join(fpath, filename))
+
+
+                        if _attr == 'phase' and isinstance(self.phase, pd.DataFrame):
+                            self.phase.to_csv(os.path.join(fpath,filename),
+                                            header=True, index=True)                        
+                            fsize_bytes += os.path.getsize(os.path.join(fpath, filename))
+
                     # Handle saving waveform data
-                    elif _attr == 'waveforms':
-                        ns_list=[]
-                        for tr_ in self._attr:
-                            nstup=(tr_.stats.network,tr_.stats.station)
+                    elif _attr == 'waveforms' and isinstance(self.waveforms, Stream):
+                        # Try to make the `waveforms` subdirectory
+                        try:
+                            os.mkdir(os.path.join(fpath,'waveforms'))
+                        except FileExistsError:
+                            pass
+                        # Get Network/Station unique subsets for mseed groupings
+                        ns_list = []
+                        for tr_ in self.waveforms:
+                            nstup = (tr_.stats.network, tr_.stats.station)
                             if nstup not in ns_list:
                                 ns_list.append(nstup)
+                        # Iterate across Net/Sta entries
                         for n_,s_ in ns_list:
-                            filename=f'{self.event.id}.{n_}.{s_}.mseed'
-                            ost=self._attr.select(network=n_, station=s_)
-                            ost.write(os.path.join(fpath,filename), fmt='MSEED')
+                            # Create filename with specified format
+                            filename = os.path.join('waveforms', f'{self.event.id}.{n_}.{s_}.mseed')
+                            # Subset waveforms
+                            ost = self.waveforms.select(network=n_, station=s_)
+                            # Write to disk
+                            ost.write(os.path.join(fpath, filename), fmt='MSEED')
+                            # Update filesize counter
                             fsize_bytes += os.path.getsize(
                                                 os.path.join(fpath, filename)
                                             )
 
                     # Handle saving Station_XML data
-                    elif _attr == 'inventory':
-                        filename=f'{self.event.id}_inv.xml'
-                        self._attr.write(os.path.join(fpath, filename),
-                                         fmt='STATIONXML')
+                    elif _attr == 'inventory' and isinstance(self.inventory, Inventory):
+                        filename = 'inventory.xml'
+                        self.inventory.write(os.path.join(fpath, filename),
+                                             'STATIONXML')
                         fsize_bytes += os.path.getsize(os.path.join(fpath,
                                                                     filename))
                     report.update({_attr: fsize_bytes})
@@ -197,11 +219,67 @@ class VerboseEvent:
         
         return report
 
-    def from_layered_directory(self, location, exclude=['waveforms','inventory']):
+
+    def from_layered_directory(self, location, exclude=[]):
         """
-        IN DEVELOPMENT - 
-        Create a VerboseEvent object from a layred directory structure 
+        Populate a VerboseEvent object from a layered directory structure generated
+        by the `to_layered_directory()` class method.
+
+        See VerboseEvent.to_layered_directory() help for further information on
+        directory structure and file formats.
+
+        :: INPUTS ::
+        :param location: [str] - relative or absolute path to target
+                                EVID labeled directory
+        :param exclude: [list] - list of strings matching VerboseEvent.attributes
+                                to exclude from the load
+                                
+        NOTE: This should probably be a stand-alone method, rather than a class method?
         """
+        # Handle case where `location` ends with a directory slash
+        if location[-1] in ['/','\\']:
+            location = location[:-1]
+        # 
+        path, evid = os.path.split(location)
+        for _attr in self.attributes:
+            if _attr not in exclude:
+                if _attr == 'event':
+                    self.event = get_event_by_id(evid)
+
+                elif _attr == 'phase':
+                    try:
+                        self.phase = pd.read_csv(os.path.join(location,'phase.csv'),
+                                                parse_dates=['Arrival Time'])
+                    except FileNotFoundError:
+                        pass
+
+                elif _attr == 'history':
+                    try:
+                        self.history = pd.read_csv(os.path.join(location,'history.csv'),
+                                                   parse_dates=True)
+                    except FileNotFoundError:
+                        pass
+
+                elif _attr == 'inventory':
+                    try:
+                        self.inventory = read_inventory(os.path.join(location,
+                                                                    'inventory.xml'))
+                    except FileNotFoundError:
+                        pass
+
+                elif _attr == 'waveforms':
+                    if self.waveforms is None:
+                        self.waveforms = Stream()
+                    flist = glob(os.path.join(location,'waveforms','*.mseed'))
+                    for f_ in flist:
+                        self.waveforms += read(f_, fmt='MSEED')
+                    if isinstance(self.inventory, Inventory):
+                        try:
+                            self.waveforms.attach_response(self.inventory)
+                        except:
+                            pass
+
+
         return None
 
     ### DATA AGGREGATION METHODS ###
@@ -248,7 +326,7 @@ class VerboseEvent:
                 warn('self.phase already contains a DataFrame!')
 
 
-    def get_waveforms(self, client, pad_sec=[0. , 60.], pad_level='wide', channels=['BH?','BN?','HH?','HN?','EH?','EN?'], attach_response=True, radius_scan=False):
+    def get_waveforms(self, client, pad_sec=[0. , 60.], pad_level='wide', net_include='all', sta_include='all', loc_include='all', channels=['BH?','BN?','HH?','HN?','EH?','EN?'], attach_response=True, radius_scan=False, progressbar=False):
         """
         Wrapper for a client.get_waveforms() that uses entries from 
         self.phase and self.event attributes (and self.inventory if not None)
@@ -271,12 +349,25 @@ class VerboseEvent:
                     'wide':     apply front_pad_sec and back_pad_sec as
                                     [origin_time - front_pad_sec
                                      last_pick_time + back_pad_sec]
+        :param net_include: [list of unix-like strings]
+                    Strings to pass to the `network` key-word argument in 
+                    client.get_waveforms()
+        :param sta_include: [list of unix-like strings]
+                    Strings to pass to the `station` key-word argument in 
+                    client.get_waveforms()
+        :param loc_include: [list of unix-like strings]
+                    Strings to pass to the `location` key-word argument in 
+                    client.get_waveforms()
         :param channels: [list of unix-like strings]
-                    Strings to pass to the `channel` key-word-argument in client.get_waveforms()
+                    Strings to pass to the `channel` key-word-argument in 
+                    client.get_waveforms()
                     see obspy.clients.fdsn.Client.get_waveforms()
         :param attach_response: [bool]
                     False (default) - get trace data and header information
                     True            - get only trace header information
+        :param progressbar: [bool]
+                    Should there be a `tqdm` progress bar initialized for each
+                    station-data load?
         :: OUTPUT ::
         :return self: Updated self.waveforms containing the output                         
         """ 
@@ -284,62 +375,82 @@ class VerboseEvent:
             channels=list(channels)
 
         # Make sure waveform data aren't already present
-        if self.waveforms is None:
-            ## SANITY
-            # If no phase data are provided, but there are event data
-            if self.phase is None and self.event is not None:
-                warn("no phase data available, defaulting to pad_level='event'")
-                pad_level='event'
-            # Exit if there are no phase or event data
-            elif self.phase is None and self.event is None:
-                warn("no Phase or Event data present. Exiting.")
-                exit()
+        # if self.waveforms is None:
+        ## SANITY
+        # If no phase data are provided, but there are event data
+        if self.phase is None and self.event is not None:
+            warn("no phase data available, defaulting to pad_level='event'")
+            pad_level='event'
+        # Exit if there are no phase or event data
+        elif self.phase is None and self.event is None:
+            warn("no Phase or Event data present. Exiting.")
+            exit()
 
-            ## GET BOUNDING TIMES FOR QUERY
-            # Get bounding times for query type 'event'
-            if pad_level.lower() == 'event':
-                t0=UTCDateTime(self.event.time) - pad_sec[0]
-                tf=UTCDateTime(self.event.time) + pad_sec[1]                 
+        ## GET BOUNDING TIMES FOR QUERY
+        # Get bounding times for query type 'event'
+        if pad_level.lower() == 'event':
+            t0=UTCDateTime(self.event.time) - pad_sec[0]
+            tf=UTCDateTime(self.event.time) + pad_sec[1]                 
 
-            # Get bounding times for query type 'wide'
-            elif pad_level.lower() == 'wide':
-                t0=UTCDateTime(self.event.time) - pad_sec[0]
-                tf=UTCDateTime(self.phase['Arrival Time'].max()) + pad_sec[1]
+        # Get bounding times for query type 'wide'
+        elif pad_level.lower() == 'wide':
+            t0=UTCDateTime(self.event.time) - pad_sec[0]
+            tf=UTCDateTime(self.phase['Arrival Time'].max()) + pad_sec[1]
+        
+        
+        ## TODO: Shift NS*L filters from inputs into this section
+        # Get unique network-station list and include channel_control
+        netsta_list = []
+        nscl_unique = self.phase['Channel'].unique()
+        for _nscl in nscl_unique:
+            _nscl_parsed = _nscl.split('.')
+            if [_nscl_parsed[0],_nscl_parsed[1]] not in netsta_list:
+                
+                # net_include check
+                if net_include != 'all':
+                    isinclude = False
+                    if _nscl_parsed[0] in net_include:
+                        isinclude = True
+                else:
+                    isinclude = True
 
-            # Get unique network-station list and include channel_control
-            netsta_list=[]
-            nscl_unique=self.phase['Channel'].unique()
-            for _nscl in nscl_unique:
-                _nscl_parsed=_nscl.split('.')
-                if [_nscl_parsed[0],_nscl_parsed[1]] not in netsta_list:
+                # station_include check
+                if sta_include != 'all':
+                    if _nscl_parsed[1] in sta_include:
+                        isinclude = True
+                    else:
+                        isinclude = False
+                else:
+                    isinclude = True
+
+                if isinclude:
                     netsta_list.append([_nscl_parsed[0],_nscl_parsed[1]])
 
-            ## DO WAVEFORM QUERY ##
-            # Create stream
-            wf_stream=Stream()
-
-            # Iterate across net/sta combinations
-            for n_,s_ in tqdm(netsta_list):
-                # Attempt all channel-code permuatations provided 
-                # (cuz ObsPy Clients dont like the '??[ZNE123]' ~actual~ Unix wildcard syntax)
-                for c_ in channels:
-                    try:
-                        ist=client.get_waveforms(network=n_, station=s_,
-                                                location='*', channel=c_,
-                                                starttime=t0, endtime=tf,
-                                                head_only=head_only,
-                                                attach_response=attach_response)
-                    # Suppresses "bad request"
-                    except:
-                        ist=Stream()
-                    wf_stream += ist
+        ## DO WAVEFORM QUERY ##
+        # Create stream
+        wf_stream = Stream()
+        # Iterate across net/sta combinations
+        for n_,s_ in tqdm(netsta_list, disable=progressbar):
+            # Attempt all channel-code permuatations provided 
+            # (cuz ObsPy Clients dont like the '??[ZNE123]' ~actual~ Unix wildcard syntax)
+            for c_ in channels:
+                try:
+                    ist=client.get_waveforms(network=n_, station=s_,
+                                            location='*', channel=c_,
+                                            starttime=t0, endtime=tf,
+                                            attach_response=attach_response)
+                # Suppresses "bad request"
+                except:
+                    ist=Stream()
+                wf_stream += ist
 
 
 
-            self.waveforms=wf_stream 
-        else:
-            warn(f'self.waveforms already contains data of type {type(self.waveforms)} -- exiting process.')
-            exit()
+        self.waveforms = wf_stream 
+        # else:
+        #     warn(f'self.waveforms already contains data of type {type(self.waveforms)} -- exiting process.')
+        #     exit()
+
 
     def _get_waveforms_radius_scan(self, client, pad_sec=[0. , 60.], pad_level='wide', channels=['BH?','BN?','HH?','HN?','EH?','EN?'], attach_response=True):
         """
@@ -358,24 +469,6 @@ class VerboseEvent:
 
 
     ## Metadata submodule methods
-    def SummaryEvent2DetailEvent(self):
-        """
-        Convert valid libcomcat.classes.SummaryEvent object assigned to self.event
-        into a libcomcat.classes.DetailEvent for the same event.
-
-        Simple wrapper for the libcomcat.search.get_event_by_id() method
-
-        TODO: This may be a re-hash of the SummaryEvent class-method `getDetailEvent()`
-        """
-        if isinstance(self.event,SummaryEvent):
-            self.event=get_event_by_id(self.event.id)
-        elif(self.event,DetailEvent):
-            print('self.event is already type libcomcat.classes.DetailEvent')
-            pass
-        else:
-            print('...something else went wrong...')
-            exit()
-
 
     def populate_history(self):
         """
@@ -393,8 +486,6 @@ class VerboseEvent:
 
     def populate_phase(self):
         """
-        PRIVATE METHOD
-
         Populate the self.phase attribute so long as the self.event contains
         a valid libcomcat.classes.DetailEvent object that has an `id` attribute.
         """
@@ -405,7 +496,7 @@ class VerboseEvent:
             warn(f'self.event is type: {type(self.event)} -- seeking libcomcat.classes.DetailEvent')
 
 
-    def populate_inventory(self, client, level='station'):
+    def populate_inventory(self, client, level='station', source='phase'):
         """
 
         Populate the self.inventory attribute using a defined level of specificity
@@ -421,13 +512,15 @@ class VerboseEvent:
         elif isinstance(self.inventory, Inventory):
             pass
         else:
-            warn(f'self.inventory is type {type(self.inventory)} - overwriting with empty inventory object')
+            print(f'self.inventory is type {type(self.inventory)}')
+            print('overwriting with empty inventory object')
             self.inventory = Inventory()
 
         # If a valid client is passed
         if isinstance(client, Client):
             # Initially try to populate the inventory from unique nscl's in self.phase
-            if isinstance(self.phase,pd.DataFrame):
+            # if isinstance(self.phase,pd.DataFrame):
+            if source == 'phase':
                 # Conduct a check to not duplicate net/station/instrument-type entries
                 nsi_list = []
                 for _c in self.phase['Channel'].unique():
@@ -438,16 +531,40 @@ class VerboseEvent:
                     if _nslc not in nsi_list:
                         # Add to unique list
                         nsi_list.append(_nslc)
-                        # Bundle data for kwargs in client.get_stations(), including inventory completeness level
-                        knslc = dict(zip(['network','station','location','channel','level'],_nslc + [level]))
+                        # Bundle data for kwargs in client.get_stations(), 
+                        # including inventory completeness level
+                        knslc = dict(zip(['network', 'station', 
+                                          'location', 'channel',
+                                          'level'],_nslc + [level]))
                         # Append station inventory to self.inventory
                         self.inventory += client.get_stations(**knslc)
-            elif isinstance(self.waveforms,Stream):
-                pass
+            # elif isinstance(self.waveforms,Stream):
+            elif source == 'waveforms':
+                # Conduct a check to not duplicate net/station/instrument-type entries
+                nsi_list = []
+                for _tr in self.waveforms:
+                    _nscl = [_tr.stats[fld] for fld in ['network','station','channel','location']]
+                    # Compose a wildcard version of NSLC
+                    _nslc = [_nscl[0], _nscl[1], '*', _nscl[2][:2]+'?']
+                    # If unique
+                    if _nslc not in nsi_list:
+                        # Add to unique list
+                        nsi_list.append(_nslc)
+                        # Bundle data for kwargs in client.get_stations(), including 
+                        # inventory completeness level
+                        knslc = dict(zip(['network', 'station',
+                                          'location', 'channel',
+                                          'level', 'starttime',
+                                          'endtime'], _nslc + 
+                                          [level, _tr.stats.starttime,
+                                           _tr.stats.endtime]))
+                        # Append station inventory to self.inventory
+                        self.inventory += client.get_stations(**knslc)                
+                # pass
 
     ### PYROCKO EXTENSIONS ###
 
-    def snuffle(self,**kwargs):
+    def snuffle(self, **kwargs):
         """
         Initialize an interactive Snuffler with as much data as possible
         from data contained inside this VerboseEvent()
@@ -552,7 +669,8 @@ class VerboseCatalog:
     and visualization methods operating on structured data contained within 
     a list of VerboseEvent objects.
     """
-    def __init__(self, verbose_catalog_list):
+    def __init__(self, verbose_catalog_list, load_phase = True, load_history = False):
+        self.events = []
         ## Define initial class structure
         self.summary = pd.DataFrame(columns=["Evid","Magnitude","Magnitude Type",
                                               "Epoch(UTC)","Time UTC","Time Local",
@@ -565,22 +683,35 @@ class VerboseCatalog:
             self.events = list(verbose_catalog_list)
         elif isinstance(verbose_catalog_list, list):
             # Do sanity check on all elements of list
-            self.events = verbose_catalog_list
+            for _e in tqdm(verbose_catalog_list):
+                if isinstance(_e,SummaryEvent):
+                    self.events.append(VerboseEvent(_e.getDetailEvent()))
+                elif isinstance(_e,DetailEvent):
+                    self.events.append(VerboseEvent(_e))
+                elif isinstance(_e,VerboseEvent):
+                    self.events.append(_e)
+                elif isinstance(_e):
+                    breakpoint()
+            # self.events = verbose_catalog_list
             #[ve for ve in verbose_catalog_list if isinstance(ve, VerboseEvent)]
 
+        for _e in self.events:
+            if _e.phase is None:
+                _e.populate_phase()
 
         holder = []
         for _i, _ve in enumerate(self.events):
             # Do dataframe summary of events in PNSN standard EVENT table format
             line=[_ve.event.id, _ve.event.magnitude, _ve.event['magType'][1:],
-                    _ve.event.time.timestamp(), _ve.event.time, pd.NaT,
-                    _ve.event['title'], _ve.event.latitude, _ve.event.longitude, _ve.event.depth,
-                    _ve.event.depth*1e3*3.281/5280.,
-                    isinstance(_ve.event, DetailEvent),
-                    isinstance(_ve.history, pd.DataFrame),
-                    isinstance(_ve.phase, pd.DataFrame),
-                    isinstance(_ve.waveforms, Stream),
-                    isinstance(_ve.inventory, Inventory)]
+                  _ve.event.time.timestamp(), _ve.event.time, pd.NaT,
+                  _ve.event['title'], _ve.event.latitude, 
+                  _ve.event.longitude, _ve.event.depth,
+                  _ve.event.depth*1e3*3.281/5280.,
+                  isinstance(_ve.event, DetailEvent),
+                  isinstance(_ve.history, pd.DataFrame),
+                  isinstance(_ve.phase, pd.DataFrame),
+                  isinstance(_ve.waveforms, Stream),
+                  isinstance(_ve.inventory, Inventory)]
 
             holder.append(line)
         # Update Dataframe
