@@ -32,7 +32,7 @@ def get_unique_band_inst_codes(stream):
             codes.append(BIC)
     return codes
 
-def split_streams(stream):
+def split_streams(stream,order='ZNE'):
     """
     Split streams by unique band/instrument codes
     :: INPUT ::
@@ -44,7 +44,9 @@ def split_streams(stream):
     codes = get_unique_band_inst_codes(stream)
     streams = {}
     for code in codes:
-        sti = stream.select(channel=code+'?')
+        sti = Stream()
+        for comp in order:
+            sti += stream.select(channel=code+comp)
         streams.update({code: sti})
     return streams
 
