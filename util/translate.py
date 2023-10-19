@@ -8,6 +8,7 @@
 import pyrocko.gui.marker as pm
 from obspy.core.utcdatetime import UTCDateTime
 from pandas import Timestamp
+from datetime import datetime
 
 
 def sbm2spm(picks, nslc, method='bounds', kind=0, pick_fmt='%s'):
@@ -161,6 +162,7 @@ def extract_timestamp(pick_object):
                         obspy.core.utcdatetime.UTCDateTime
                         pandas._libs.tslibs.timestamps.Timestamp
                         pyrocko.gui.markers.Marker (and child-classes)
+                        timestamp.timestamp
     :: OUTPUT ::
     :return time: [float] epoch time
     """
@@ -175,6 +177,8 @@ def extract_timestamp(pick_object):
             time = time1
         else:
             time = (time1 + time2)/2
+    elif isinstance(pick_object, datetime):
+        time = datetime
     else:
         print('Input object of type %s not handled by this method'%(str(type(pick_object))))
         time = False
