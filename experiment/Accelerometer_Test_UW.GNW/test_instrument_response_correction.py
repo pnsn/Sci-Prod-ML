@@ -17,7 +17,7 @@ import numpy as np
 import pandas as pd
 from glob import glob
 from obspy import Stream, UTCDateTime
-sys.path.append(os.path.join('..','..'))
+sys.path.append(os.path.join('..', '..'))
 import query.verboseevent as qve
 import matplotlib.pyplot as plt
 from pyrocko import obspy_compat
