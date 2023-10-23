@@ -213,10 +213,9 @@ class VerboseEvent:
                                                                     filename))
                     report.update({_attr: fsize_bytes})
 
-
         else:
             print('No self.event data -- nothing done')
-        
+
         return report
 
 
@@ -248,15 +247,15 @@ class VerboseEvent:
 
                 elif _attr == 'phase':
                     try:
-                        self.phase = pd.read_csv(os.path.join(location,'phase.csv'),
-                                                parse_dates=['Arrival Time'])
+                        self.phase = pd.read_csv(os.path.join(location, 'phase.csv'),
+                                                parse_dates=['Arrival Time'], index_col=[0])
                     except FileNotFoundError:
                         pass
 
                 elif _attr == 'history':
                     try:
-                        self.history = pd.read_csv(os.path.join(location,'history.csv'),
-                                                   parse_dates=True)
+                        self.history = pd.read_csv(os.path.join(location, 'history.csv'),
+                                                   parse_dates=True, index_col=[0])
                     except FileNotFoundError:
                         pass
 
