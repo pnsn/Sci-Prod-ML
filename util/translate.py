@@ -9,6 +9,7 @@ import pyrocko.gui.marker as pm
 from obspy.core.utcdatetime import UTCDateTime
 from pandas import Timestamp
 from datetime import datetime
+from scipy.optimize import leastsq
 
 
 def sbm2spm(picks, nslc, method='bounds', kind=0, pick_fmt='%s'):
@@ -152,35 +153,4 @@ def relabel_annotations(stream, annotation, model, training_data_code):
     return annotation
 
 
-
-
-def extract_timestamp(pick_object):
-    """
-    Extract an epoch timestamp from a variety of pick object formats
-    :: INPUT ::
-    :param pick_object: Currently handles:
-                        obspy.core.utcdatetime.UTCDateTime
-                        pandas._libs.tslibs.timestamps.Timestamp
-                        pyrocko.gui.markers.Marker (and child-classes)
-                        timestamp.timestamp
-    :: OUTPUT ::
-    :return time: [float] epoch time
-    """
-    if isinstance(pick_object,UTCDateTime):
-        time = pick_object.timestamp
-    elif isinstance(pick_object,Timestamp):
-        time = pick_object.timestamp()
-    elif isinstance(pick_object,pm.Marker):
-        time1 = pick_object.get_tmin()
-        time2 = pick_object.get_tmax()
-        if time1 == time2:
-            time = time1
-        else:
-            time = (time1 + time2)/2
-    elif isinstance(pick_object, datetime):
-        time = datetime
-    else:
-        print('Input object of type %s not handled by this method'%(str(type(pick_object))))
-        time = False
-    return time
 
