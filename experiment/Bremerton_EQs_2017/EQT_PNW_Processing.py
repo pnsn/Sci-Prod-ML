@@ -33,7 +33,7 @@ OUT_ROOT = os.path.join('/Volumes', 'LaCie', 'PNW_Store_Local', 'ml_pred_PNW2017
 OUT_FILE_FSTR = os.path.join(OUT_ROOT, '{NET}', '{YEAR}', '{JDAY}', 
                              '{STA}.{NET}.{YEAR}.{JDAY}.{LOC}.{BI_ID}.{FMT}')
 # Get file list from disk
-flist = glob(os.path.join(DATA_ROOT, 'PNW2017', '*', '2017', '132', '*'))
+flist = glob(os.path.join(DATA_ROOT, 'PNW2017', '*', '2017', '13[0]', '*'))
 flist.sort()
 print('Preparing to iterate across %d waveform day_volumes'%(len(flist)))
 ## Load models ##
@@ -42,26 +42,27 @@ print('Preparing to iterate across %d waveform day_volumes'%(len(flist)))
 # Model provided by Yiyu Ni on 10. Oct 2023. (auth contact: niyiyu@uw.edu)
 # Model should be provided with future versions of SeisBench
 model_EQT_pnw = EQTransformer.from_pretrained('pnw')
-
+model_EQT_pnw.filter_args = None
+model_EQT_pnw.filter_kwargs = None
 # # These models are standard-shipped with SeisBench
 # model_EQT_stead = EQTransformer.from_pretrained('stead')
 # model_PN_stead = PhaseNet.from_pretrained('stead')
 
 print('Pretrained ML models loaded')
 
-ML_models = {'EQW': model_EQT_pnw}#, 'EQD': model_EQT_stead, 'PND': model_PN_stead}
+ML_models = {'EQX': model_EQT_pnw}#, 'EQD': model_EQT_stead, 'PND': model_PN_stead}
 
 ## Preprocessing Controls
 merge_kwargs = {'method': 1}
 ## Detection Threshold for initial pick selection
-dthresh = 0.7
+dthresh = 0.1
 ## Save Format
 save_fmt = 'MSEED'
 
 # Iterate through day_volume files
 for f_ in tqdm(flist):
     # Read in data
-    stream = read(f_)
+    stream = read(f_).normalize()
     # Merge data
     # stream.merge(**merge_kwargs)
     # Split streams by Band and Instrument codes
@@ -76,11 +77,11 @@ for f_ in tqdm(flist):
             train_name = model_key
 
             # Conduct probabalistic prediction
-            ann_stream = model.annotate(BI_stream,**annotate_kwargs)
+            ann_stream = model.annotate(BI_stream, **annotate_kwargs)
             
             # Get picks from annotations given a particular threshold
             wfm = WaveformModel(model)
-            picks = wfm.detections_from_annotations(ann_stream,dthresh)
+            picks = wfm.detections_from_annotations(ann_stream, dthresh)
 
             # Write picks to two formats
             # Pickle with naming conventions from Ni et al. (2023)
@@ -89,16 +90,16 @@ for f_ in tqdm(flist):
             # for p_ in picks:
 
 
-            SEED_ann_stream = ut.relabel_annotations(BI_stream,ann_stream,model,model_key[-1])
+            SEED_ann_stream = ut.relabel_annotations(BI_stream, ann_stream, model, model_key[-1])
            
             # Compose output file name
             ofile = OUT_FILE_FSTR.format(NET=SEED_ann_stream[0].stats.network,
-                                        YEAR=SEED_ann_stream[0].stats.starttime.year,
-                                        JDAY=SEED_ann_stream[0].stats.starttime.julday,
-                                        STA=SEED_ann_stream[0].stats.station,
-                                        LOC=SEED_ann_stream[0].stats.location,
-                                        BI_ID=SEED_ann_stream[0].stats.channel[:2],
-                                        FMT=save_fmt)
+                                         YEAR=SEED_ann_stream[0].stats.starttime.year,
+                                         JDAY=SEED_ann_stream[0].stats.starttime.julday,
+                                         STA=SEED_ann_stream[0].stats.station,
+                                         LOC=SEED_ann_stream[0].stats.location,
+                                         BI_ID=SEED_ann_stream[0].stats.channel[:2],
+                                         FMT=save_fmt)
             # Create directory structure (if not already present)
             try: 
                 os.makedirs(os.path.split(ofile)[0])
