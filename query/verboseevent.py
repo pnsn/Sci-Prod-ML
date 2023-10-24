@@ -100,7 +100,6 @@ class VerboseEvent:
         self.waveforms=waveform_Stream
         self.inventory=inventory
         self.attributes=['event','history','phase','waveforms','inventory']
-
     ### COMMAND LINE DISPLAY ###
     def __repr__(self):
         """
@@ -218,7 +217,6 @@ class VerboseEvent:
 
         return report
 
-
     def from_layered_directory(self, location, exclude=[]):
         """
         Populate a VerboseEvent object from a layered directory structure generated
@@ -282,7 +280,6 @@ class VerboseEvent:
         return None
 
     ### DATA AGGREGATION METHODS ###
-
     def populate_from_evid(self, evid):
         """
         Provides an option for populating an empty (or partially empty) 
@@ -571,20 +568,35 @@ class VerboseEvent:
         Based on the pyrocko.obspy_compat module extension to 
         obspy.core.stream.Stream, giving streams the `.snuffle()` class method
         """
-        obspy_compat.plant()
-        if isinstance(self.waveforms,Stream):
-            if isinstance(self.inventory,Inventory):
-                _inv = self.inventory
+        # As long as there are waveforms, try to run snuffler
+        if isinstance(self.waveforms, Stream):
+            # Try to generate event (redundant, but have here for debugging during DEV)
+            try:
+                _eve = self._event2snuffler_event_marker()
+            except:
+                breakpoint()
+
+            # If there's an inventory, create an 
+            if isinstance(self.inventory, Inventory):
                 _sta = self.inventory.to_pyrocko_stations()
             else:
-                _inv = None
                 _sta = None
             
-            if isinstance(self.phase,pd.DataFrame) and len(self.phase):
-                _eve = self.event2snuffler_event_marker()
-                _phz = self.phase_dataframe2snuffler_phase_markers(ehash=_eve.get_hash())
+            if isinstance(self.phase,pd.DataFrame) and len(self.phase) > 0:
+                _eve = self._event2snuffler_event_marker()
+                _phz = self._phase2snuffler_phases(eventmarker=_eve)
                 
 
+            snuf_kwargs = {'stations':_sta,'events':_eve}
+            try:
+                self.waveforms.snuffle(stations=_sta,events=_eve,)
+            except AttributeError:
+                # Run obspy_compat.plant() if snuffle() is not a class method for obspy.core.stream.Stream()
+                try:
+                    obspy_compat.plant() 
+                    self.waveforms.snuffle()
+                except:
+                    pass
         else:
             warn('no data in self.waveforms -- exiting snuffler attempt')
             exit()
@@ -609,7 +621,7 @@ class VerboseEvent:
                      'ML': 5}
         return codes
 
-    def event2snuffler_event_marker(self):
+    def _event2snuffler_event_marker(self):
         """
         Based on the obspy.core.catalog.Catalog.to_pyrocko_events() class method
         added to ObsPy by the `pyrocko.obspy_compat.plant()` method
@@ -618,20 +630,37 @@ class VerboseEvent:
         from `libcomcat`
 
         """
-        snuf_event = model.Event(name=f"{self.event['code']} - {self.event['title']}",
+        snuf_event = model.Event(name=f"{self.event['code']}\n{self.event['title']}",
                                  time=self.event.time.timestamp,
                                  lat=self.event.latitude,
                                  lon=self.event.longitude,
                                  depth=self.event.depth)
-        emarker = pm.EventMarker(snuf_event,kind=self.quality_codes('event')[self.event['status']])
+        emarker = pm.EventMarker(snuf_event, kind=self.quality_codes('event')[self.event['status']])
         
         return emarker
 
 
-    def _phase2snufflerphase(self,index):
-        phase_marker = pm.PhaseMarker()
+    def _phase2snuffler_phases(self, eventmarker=None):
+        markers = []
+        if isinstance(eventmarker, pm.EventMarker):
+            ehash = eventmarker.get_event_hash()
+            markers.append(eventmarker)
+        else:
+            ehash = None
+        for _i in range(len(self.phase)):
+            # Pull row entry as a Series
+            _Sp = self.phase.iloc[_i, :]
+            # Do weird formatting for NSLC in snuffler syntax
+            nslc_ids = (tuple([_Sp['Channel'].split('.')[x] for x in [0, 1, 3, 2]]),)
+            phase_marker = pm.PhaseMarker(nslc_ids=nslc_ids,
+                                          tmin=_Sp['Arrival Time'].timestamp(),
+                                          event=eventmarker.get_event(),
+                                          event_hash=ehash,
+                                          phasename=_Sp['phase'])
+            markers.append(phase_marker)
 
-
+        return markers
+    
     # ### DATA CONVERSION CLASS METHODS ###
 
     # def to_snuffler(self,label_accents={'manual':'','reviewed':'','ML':'&',}):
