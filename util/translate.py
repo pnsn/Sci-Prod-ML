@@ -129,7 +129,7 @@ def relabel_annotations(stream, annotation, model, training_data_code):
 
     WARNING: THIS OPERATES ON THE INPUT PARAMETER ANNOTATION
     """
-    model_codes = {'EQTransformer': 'EQ', 'PhaseNet': 'PN'}
+    model_codes = {'EQTransformer': 'E', 'PhaseNet': 'P'}
     pred_codes = {'P': 'P', 'S': 'S', 'Detection': 'D', 'N': 'N'}
     band_inst = []
     for tr_ in stream:
