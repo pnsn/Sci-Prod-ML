@@ -2,9 +2,12 @@ examples/data/*/PNW*
 examples/data/GHOST_1210_Example
 *.xml
 *.mseed
+*.ms
 __pycache__
 visualizations/fixed_map.png
 visualizations/interactive_station_map.html
 .DS_Store
 *phase.csv
 experiment/Accelerometer_Test_UW.GNW/data/Ni_etal_2023_ml_picks
+*.csv
+ml_prediction/obspy_stream_to_numpy_array_performance_benchmark_100dpi.png
