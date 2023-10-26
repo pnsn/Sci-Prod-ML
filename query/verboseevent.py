@@ -305,7 +305,7 @@ class VerboseEvent:
                 warn('...Somethign else went wrong...')
         # Provide a warning that self.event already contains data
         elif isinstance(self.event, SummaryEvent):
-            self.SummaryEvent2DetailEvent()
+            self.event.SummaryEvent2DetailEvent()
         else:
             warn(f'self.event contains data of type {type(self.event)}')
             exit()
@@ -313,11 +313,11 @@ class VerboseEvent:
         # Conduct import attempts on self.history and self.phase attributes
         if self.event is not None:
             if ~isinstance(self.history, pd.DataFrame):
-                self._populate_history()
+                self.populate_history()
             else:
                 warn('History attribute already contains a DataFrame!')
             if ~isinstance(self.phase, pd.DataFrame):
-                self._populate_phase()
+                self.populate_phase()
             else:
                 warn('self.phase already contains a DataFrame!')
 
@@ -705,7 +705,7 @@ class VerboseCatalog:
                                               "Distance From","Lat","Lon","Depth Km",
                                               "Depth Mi",
                                               "event","history","phase","waveform","inventory"])
-
+        self.inventory = Inventory()
         ## Do some data characterization/sanity checks during instantiation
         if ~isinstance(verbose_catalog_list, list) and isinstance(verbose_catalog_list, VerboseCatalog):
             self.events = list(verbose_catalog_list)
@@ -748,13 +748,12 @@ class VerboseCatalog:
 
     def __repr__(self):
         nentries=len(self.summary)
-        repr_str= f"=== Events:      {self.summary['event'].sum()}/{nentries} ===\n"
+        repr_str  = f"=== Events:      {self.summary['event'].sum()}/{nentries} ===\n"
         repr_str += f"=== Histories:   {self.summary['history'].sum()}/{nentries} ===\n"
         repr_str += f"=== Phases:      {self.summary['phase'].sum()}/{nentries} ===\n"
         repr_str += f"=== Waveforms:   {self.summary['waveform'].sum()}/{nentries} ===\n"
         repr_str += f"=== Inventories: {self.summary['inventory'].sum()}/{nentries} ===\n"
         return repr_str
-
 
     def populate_from_event_ids(self):
         for _ve in self.events:
@@ -770,7 +769,6 @@ class VerboseCatalog:
             except:
                 pass
     
-
     def get_waveforms(self, **kwargs):
         approval=False
         print(f'Proposed fetching waveforms for {len(self.events)}. Are you sure?')
@@ -785,7 +783,9 @@ class VerboseCatalog:
         else:
             print('Download canceled - quitting')
 
-
-
+    # def merge_inventories(self, ingestion_field='Magnitude'):
+    #     _rec_list = []
+    #     _inv = Inventory()
+    #     for 
         
 
