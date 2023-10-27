@@ -3,9 +3,9 @@
 :author: Nathan T. Stevens
 :email: ntsteven@uw.edu
 :org: Pacific Northwest Seismic Network
-:purpose: Provide methods for running detection/picking predictions on arbirary length,
-          somewhat pre-processed 3-C seismic data arrays*.
-
+:purpose: Provide methods for running detection/picking predictions on 
+        arbirary length, somewhat pre-processed 3-C seismic data arrays*.
+          
 *Assumed pre-processing:
     Data form a (3,n) numpy.ndarray with:
             [0,:] as vertical data
@@ -196,7 +196,7 @@ def taper(windows, ntaper=6):
     """
     taper = 0.5*(1. + np.cos(np.linspace(np.pi, 2.*np.pi, ntaper)))
     windows[:, :, :ntaper] *= taper
-    windows[:, :, -ntaper:] *= taper
+    windows[:, :, -ntaper:] *= taper[::-1]
 
     return windows
 
@@ -222,9 +222,6 @@ def run_prediction(windows_tt, model, device):
         preds[:, _i, :] = _p.detach().cpu().numpy()
     
     return preds
-
-
-# def run_seisbench_pred(stream, model):
 
 
 def restructure_predictions(preds, windex, model, merge_method=np.nanmax):
@@ -362,3 +359,12 @@ def stack2stream(stack, source_stream, model, mod_wt_code='EW', pred_codes=['D',
             _tr = _tr.trim(starttime=_ts, endtime=_te)
         
     return pred_stream
+
+
+def run_seisbench_pred(stream, model):
+    """
+    Convenience method for conducting a prediction workflow as facilitated by
+    classes and methods included in SeisBench
+    """
+    annotation_stream = model.annotate(stream)
+    return annotation_stream
