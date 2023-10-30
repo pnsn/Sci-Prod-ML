@@ -220,7 +220,7 @@ def run_prediction(windows_tt, model, device):
     # Unpack predictions onto CPU-hosted memory as numpy arrays
     for _i, _p in enumerate(_torch_preds):
         preds[:, _i, :] = _p.detach().cpu().numpy()
-    
+
     return preds
 
 
@@ -357,7 +357,6 @@ def stack2stream(stack, source_stream, model, mod_wt_code='EW', pred_codes=['D',
         # Trim off first and last blinding
         if trim:
             _tr = _tr.trim(starttime=_ts, endtime=_te)
-        
     return pred_stream
 
 
