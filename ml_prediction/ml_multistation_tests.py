@@ -13,29 +13,30 @@ from obspy import read, Stream, UTCDateTime
 from obspy.clients.fdsn import Client
 import prediction_methods as ml
 from time import time
-
+from tqdm import tqdm
 
 def _download_example_waveforms(chanlist=['BH?','EH?','EN?','HH?','HN?'],
                                 reftime=UTCDateTime(2017, 5, 11, 2, 31),
-                                pad=120):
+                                pad=150):
     client = Client("IRIS")
     st_dict = {}
     try:
-        os.mkdir(f'data_{pad/30:d}min')
+        os.mkdir(f'data_{int(pad/30)}min')
     except FileExistsError:
         pass
     t0 = time()
     for _ch in chanlist:
         print(f'Processing {_ch} -- elapsed time {time() - t0: .3f} sec')
         _st = client.get_waveforms(network='UW', station='*',
-                                  location='*', channel=_ch,
-                                  starttime=reftime - pad, endtime=reftime + pad)
+                                   location='*', channel=_ch,
+                                   starttime=reftime - pad,
+                                   endtime=reftime + pad)
         _st_dict = _get_unique_NSBI_from_stream(_st)
-        for _k in st_dict.keys():
+        for _k in _st_dict.keys():
             __st = _st_dict[_k]
             pok = _k.split('.')
             if len(__st) > 0:
-                fname = os.path.join(f'data_{pad/30:d}min',
+                fname = os.path.join(f'data_{int(pad/30)}min',
                                      f'{pok[0]}.{pok[1]}.{pok[3][:2]}.mseed')
                 __st.write(fname, fmt='MSEED')
                 st_dict.update({_k:__st})
@@ -277,37 +278,189 @@ def _reassemble_multistation(preds, swindex, model, st_dict,
 
 
 ## FULL RUNTHROUGH ##
-times = [time()]
-print(f'starting processing {times[0]}')
-st = _get_testdata(ROOT='data_2min')
-times.append(time())
-print(f'data loaded: {times[-1] - times[-2]: .2f} sec (elapsed: {times[-1] - times[0]: .2f} sec)')
+def run_batch_example(ROOT='data_10min'):
+    """
+    Run full example of 
+    """
+    times = [time()]
+    print(f'starting processing {times[0]}')
+    st = _get_testdata(ROOT=ROOT)
+    times.append(time())
+    print(f'data loaded: {times[-1] - times[-2]: .2f} sec (elapsed: {times[-1] - times[0]: .2f} sec)')
 
-model, device = _get_model()
-times.append(time())
-print(f'model loaded: {times[-1] - times[-2]: .2f} sec (elapsed: {times[-1] - times[0]: .2f} sec)')
+    model, device = _get_model()
+    times.append(time())
+    print(f'model loaded: {times[-1] - times[-2]: .2f} sec (elapsed: {times[-1] - times[0]: .2f} sec)')
 
-st_dict = _get_unique_NSBI_from_stream(st)
-times.append(time())
-print(f'data split by NSBI: {times[-1] - times[-2]: .2f} sec (elapsed: {times[-1] - times[0]: .2f} sec)')
+    st_dict = _get_unique_NSBI_from_stream(st)
+    times.append(time())
+    print(f'data split by NSBI: {times[-1] - times[-2]: .2f} sec (elapsed: {times[-1] - times[0]: .2f} sec)')
 
-st_dict = _resample_testdata(st_dict)
-times.append(time())
-print(f'data resampled: {times[-1] - times[-2]: .2f} sec (elapsed: {times[-1] - times[0]: .2f} sec)')
+    st_dict = _resample_testdata(st_dict)
+    times.append(time())
+    print(f'data resampled: {times[-1] - times[-2]: .2f} sec (elapsed: {times[-1] - times[0]: .2f} sec)')
 
-windows, swindex = _build_windowed_array(st_dict, model)
-times.append(time())
-print(f'data windowed: {times[-1] - times[-2]: .2f} sec (elapsed: {times[-1] - times[0]: .2f} sec)')
+    windows, swindex = _build_windowed_array(st_dict, model)
+    times.append(time())
+    print(f'data windowed: {times[-1] - times[-2]: .2f} sec (elapsed: {times[-1] - times[0]: .2f} sec)')
 
-windows = _apply_taper(windows)
-times.append(time())
-print(f'taper applied: {times[-1] - times[-2]: .2f} sec (elapsed: {times[-1] - times[0]: .2f} sec)')
+    windows = _apply_taper(windows)
+    times.append(time())
+    print(f'taper applied: {times[-1] - times[-2]: .2f} sec (elapsed: {times[-1] - times[0]: .2f} sec)')
 
-pred = _run_prediction(windows, model, device)
-times.append(time())
-print(f'prediction complete: {times[-1] - times[-2]: .2f} sec (elapsed: {times[-1] - times[0]: .2f} sec)')
+    pred = _run_prediction(windows, model, device)
+    times.append(time())
+    print(f'prediction complete: {times[-1] - times[-2]: .2f} sec (elapsed: {times[-1] - times[0]: .2f} sec)')
 
-pred_st = _reassemble_multistation(pred, swindex, model, st_dict)
-times.append(time())
-print(f'output streams composed: {times[-1] - times[-2]: .2f} sec (elapsed: {times[-1] - times[0]: .2f} sec)')
+    pred_st = _reassemble_multistation(pred, swindex, model, st_dict)
+    times.append(time())
+    print(f'output streams composed: {times[-1] - times[-2]: .2f} sec (elapsed: {times[-1] - times[0]: .2f} sec)')
 
+    return times, pred_st, pred, swindex, model, device, st
+
+
+
+def run_fragmented_example(ROOT='data_10min', batch_size=100, max_torch_threads=None):
+    """
+    Run sequential sets of scaled input window data subsets of `batch_size`
+    to modulate the amount of data introduced for a shared-memory, multi-thread
+    process 
+    """
+    if isinstance(max_torch_threads, int) or isinstance(max_torch_threads, float):
+        if int(max_torch_threads) < ml.torch.get_num_threads():
+            ml.torch.set_num_threads = int(max_torch_threads)
+            print(f'CAUTION - max PyTorch threads set to {int(max_torch_threads)}')
+            print('subsequent attempts to assign torch.set_num_threads() in ipython will require restart of kernel')
+    else:
+        print(f'FYI - PyTorch is running on {ml.torch.get_num_threads()} threads')
+
+    times = [time()]
+    print(f'starting processing {times[0]}')
+    st = _get_testdata(ROOT=ROOT)
+    times.append(time())
+    print(f'data loaded: {times[-1] - times[-2]: .2f}\
+           sec (elapsed: {times[-1] - times[0]: .2f} sec)')
+
+    model, device = _get_model()
+    times.append(time())
+    print(f'model loaded: {times[-1] - times[-2]: .2f}\
+           sec (elapsed: {times[-1] - times[0]: .2f} sec)')
+
+    st_dict = _get_unique_NSBI_from_stream(st)
+    times.append(time())
+    print(f'data split by NSBI: {times[-1] - times[-2]: .2f}\
+           sec (elapsed: {times[-1] - times[0]: .2f} sec)')
+
+    st_dict = _resample_testdata(st_dict)
+    times.append(time())
+    print(f'data resampled: {times[-1] - times[-2]: .2f}\
+           sec (elapsed: {times[-1] - times[0]: .2f} sec)')
+
+    windows, swindex = _build_windowed_array(st_dict, model)
+    times.append(time())
+    print(f'data windowed: {times[-1] - times[-2]: .2f}\
+           sec (elapsed: {times[-1] - times[0]: .2f} sec)')
+
+    windows = _apply_taper(windows)
+    times.append(time())
+    print(f'taper applied: {times[-1] - times[-2]: .2f}\
+           sec (elapsed: {times[-1] - times[0]: .2f} sec)')
+
+    # Explicitly preallocate space for predictions
+    pred = np.zeros(shape=windows.shape, dtype=np.float32)
+    n_pop = pred.shape[0]//batch_size
+    # Iterate across full windows
+    for _i in tqdm(range(n_pop - 1)):
+        _pred = _run_prediction(windows[_i*batch_size:(_i + 1)*batch_size], 
+                                model, device)
+        pred[_i*batch_size:(_i + 1)*batch_size, :, :] = _pred
+    # Get last window even if # of windows < batch_size
+    pred[n_pop*batch_size:, :, :] = _run_prediction(windows[n_pop*batch_size:, :, :],
+                                                    model, device)
+    times.append(time())
+    print(f'prediction complete: {times[-1] - times[-2]: .2f}\
+           sec (elapsed: {times[-1] - times[0]: .2f} sec)')
+
+    pred_st = _reassemble_multistation(pred, swindex, model, st_dict)
+    times.append(time())
+    print(f'output streams composed: {times[-1] - times[-2]: .2f}\
+           sec (elapsed: {times[-1] - times[0]: .2f} sec)')
+
+    return times, pred_st, pred, swindex, model, device, st
+
+
+
+
+def run_data_throtle_test(ROOT='data_10min', chan_code='EH?', batch_sizes = np.arange(2,22,2), max_torch_threads = 8):
+    """
+    Run a time-trial on processing 10 minutes of data resampled to 100 Hz from EH? channels for the entire
+    UW network during May 11 2017 with varying batch_size values for the number of data windows presented
+    to the multi-threading instance of a EQTransformer prediction in PyTorch (Mousavi et al., 2020; Woollam
+    et al., 2022). All data loading and pre-processing is handled communnally, and time-trials are conducted
+    on an inner for-loop around the prediction step.
+
+
+    TODO: Add in a memory use profiler. Some ideas here:
+        https://stackoverflow.com/questions/47410932/python-log-memory-usage
+    """
+    if isinstance(max_torch_threads, int) or isinstance(max_torch_threads, float):
+        if int(max_torch_threads) < ml.torch.get_num_threads():
+            ml.torch.set_num_threads = int(max_torch_threads)
+            print(f'CAUTION - max PyTorch threads set to {int(max_torch_threads)}')
+            print('subsequent attempts to assign torch.set_num_threads() in ipython will require restart of kernel')
+    else:
+        print(f'FYI - PyTorch is running on {ml.torch.get_num_threads()} threads')
+
+    times = [time()]
+    print(f'starting processing {times[0]}')
+    st = _get_testdata(ROOT=ROOT)
+    times.append(time())
+    print(f'data loaded: {times[-1] - times[-2]: .2f}\
+           sec (elapsed: {times[-1] - times[0]: .2f} sec)')
+
+    model, device = _get_model()
+    times.append(time())
+    print(f'model loaded: {times[-1] - times[-2]: .2f}\
+           sec (elapsed: {times[-1] - times[0]: .2f} sec)')
+
+    st_dict = _get_unique_NSBI_from_stream(st)
+    times.append(time())
+    print(f'data split by NSBI: {times[-1] - times[-2]: .2f}\
+           sec (elapsed: {times[-1] - times[0]: .2f} sec)')
+
+    st_dict = _resample_testdata(st_dict)
+    times.append(time())
+    print(f'data resampled: {times[-1] - times[-2]: .2f}\
+           sec (elapsed: {times[-1] - times[0]: .2f} sec)')
+
+    windows, swindex = _build_windowed_array(st_dict, model)
+    times.append(time())
+    print(f'data windowed: {times[-1] - times[-2]: .2f}\
+           sec (elapsed: {times[-1] - times[0]: .2f} sec)')
+
+    windows = _apply_taper(windows)
+    times.append(time())
+    print(f'taper applied: {times[-1] - times[-2]: .2f}\
+           sec (elapsed: {times[-1] - times[0]: .2f} sec)')
+    timetrials = []
+    # Explicitly preallocate space for predictions
+    for _bs in batch_sizes:
+        print(f'Current batch size: {_bs}')
+        _t0 = time()
+        pred = np.zeros(shape=windows.shape, dtype=np.float32)
+        n_pop = pred.shape[0]//_bs
+        # Iterate across full windows
+        for _i in tqdm(range(n_pop - 1)):
+            _pred = _run_prediction(windows[_i*_bs:(_i + 1)*_bs], 
+                                    model, device)
+            pred[_i*_bs:(_i + 1)*_bs, :, :] = _pred
+        # Get last window even if # of windows < _bs
+        pred[n_pop*_bs:, :, :] = _run_prediction(windows[n_pop*_bs:, :, :],
+                                                        model, device)
+        _t1 = time()
+        pred_st = _reassemble_multistation(pred, swindex, model, st_dict)
+        _t2 = time()
+        timetrials.append([_bs, _t1 - _t0, _t2 - _t1])
+        del pred_st, pred, n_pop, _pred
+    
+    return timetrials
