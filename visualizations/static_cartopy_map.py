@@ -15,10 +15,10 @@ import cartopy.feature as cf
 # Instantiate request to OpenStreetMap
 # request = cimgt.OSM()
 
-fig = plt.figure(figsize=(10,10))
-ax = fig.add_subplot(1,1,1,projection=ccrs.PlateCarree())
+fig = plt.figure(figsize=(10, 10))
+ax = fig.add_subplot(1, 1, 1, projection=ccrs.PlateCarree())
 # Set Bounds
-lat0,lon0 = 47.5828,-122.57841
+lat0, lon0 = 47.5828, -122.57841
 bounds = [lon0 - 0.5, lon0 + 0.5, lat0 - 0.33, lat0 + 0.33]
 # ax = plt.axes(projection=request.crs)
 ax.set_extent(bounds)
