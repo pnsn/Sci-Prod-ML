@@ -1,7 +1,7 @@
 """
 :module: benchmark_stream2array.py
 :author: Nathan T. Stevens
-:email: ntsteven@uw.edu
+:email: ntsteven atuw.edu
 :org: Pacific Northwest Seismic Network
 :purpose:
     This script runs benchmark tests on data conversion methods for

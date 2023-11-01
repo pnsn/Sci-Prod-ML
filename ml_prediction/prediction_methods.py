@@ -1,7 +1,7 @@
 """
 :module: prediction_methods.py
 :author: Nathan T. Stevens
-:email: ntsteven@uw.edu
+:email: ntsteven at uw.edu
 :org: Pacific Northwest Seismic Network
 :purpose: Provide methods for running detection/picking predictions on 
         arbirary length, somewhat pre-processed 3-C seismic data arrays*.

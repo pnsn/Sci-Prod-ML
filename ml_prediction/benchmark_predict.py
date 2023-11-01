@@ -1,7 +1,7 @@
 """
 :module: benchmark_predict.py
 :author: Nathan T. Stevens
-:email: ntsteven@uw.edu
+:email: ntsteven at uw.edu
 :org: Pacific Northwest Seismic Network
 :purpose: Provide a set of benchmark tests for PyTorch facilitated 
           earthquake detection, body wave arrival time, and body wave

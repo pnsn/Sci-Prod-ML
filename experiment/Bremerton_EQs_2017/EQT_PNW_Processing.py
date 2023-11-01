@@ -6,7 +6,7 @@
           Ni et al. (2023) and annotation traces are saved to disk for subsequent threshold/algorithm
           performance analyses
 :auth: Nathan T. Stevens
-:email: ntsteven@uw.edu
+:email: ntsteven at uw.edu
 :org: Pacific Northwest Seismic Network (PNSN)
 """
 # Import environment dependencies
