@@ -1,0 +1,47 @@
+name: pnsn_ml_dev_M2
+channels:
+  - anaconda
+  - conda-forge
+  - pytorch
+  - apple
+
+dependencies:
+# Python dev. env.
+  - python
+  - ipython
+  - pip
+  - jupyterlab
+# Data manipulation
+  - numpy
+  - scipy
+  - pandas
+  - obspy
+# Data I/O
+  - wget
+  - h5py
+  - zarr
+  - xarray
+  - netcdf4
+  # Extra dependency for psycopg2
+  - mysql-connector-python
+# Plotting
+  - matplotlib
+  - plotly
+  - folium
+  # Extra dependencies for Pyrocko|Snuffler (see pip)
+  - pyqt
+  - pyqtwebengine
+# ML toolboxes
+  - scikit-learn
+# pip installs
+  - pip:
+      # General setup tools
+      - setuptools
+      # SeisBench API for model/weights handling
+      - seisbench
+      # Access Snuffler for GUI visualization/analysis
+      - pyrocko
+      # Database query tools
+      - usgs-libcomcat
+      - pyscopg2
+
