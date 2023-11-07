@@ -28,9 +28,13 @@ from obspy import Stream, UTCDateTime
 import seisbench.models as sbm
 from tqdm import tqdm
 
+####################################
+# MODEL LOADING CONVENIENCE METHOD #
+####################################
+
 
 def initialize_EQT_model(sbm_model=sbm.EQTransformer.from_pretrained('pnw'),
-                         nwin=6000, nstep=1800, nlb=500, nrb=500,
+                         nstep=1800, nlb=500, nrb=500,
                          device=torch.device('cpu'),
                          filter_args_overwrite=False,
                          filter_kwargs_overwrite=False):
@@ -42,8 +46,6 @@ def initialize_EQT_model(sbm_model=sbm.EQTransformer.from_pretrained('pnw'),
     :param sbm_model: [seisbench.model.<model_subclass>]
             specified PyTorch model built with the SeisBench
             WaveformModel abstraction and weights loaded
-    :param nwin: [int]
-            Number of datapoints the model expects for prediction inputs
     :param nstep: [int]
             Number of datapoints to advance an annotation window by for each
             prediction
@@ -94,6 +96,11 @@ def initialize_EQT_model(sbm_model=sbm.EQTransformer.from_pretrained('pnw'),
     # Place model into evaluate mode
     model.eval()
     return model, device
+
+
+##############################
+# CORE PREPROCESSING METHODS #
+##############################
 
 
 def prepare_windows_from_stream(stream, model, 
@@ -220,6 +227,8 @@ def prepare_windows_from_stream(stream, model,
 ########################################################
 # Supporting methods for prepare_windows_from_stream() #
 ########################################################
+
+
 def stream_to_NSLBI_dict(stream,
                          merge_kwargs={'method': 1, 'interpolation_samples': 5},
                          verbose=True):
@@ -273,7 +282,10 @@ def stream_to_NSLBI_dict(stream,
                                  _nslbi.split('.')))
         _stream = stream.copy().select(**select_kwargs)
         if merge_kwargs:
-            _stream = _stream.merge(**merge_kwargs)
+            try:
+                _stream = _stream.merge(**merge_kwargs)
+            except:
+                breakpoint()
         st_list.append(_stream)
     # Zip everything together for output
     NSLBI_dict = dict(zip(NSLBI_list, st_list))
@@ -424,7 +436,16 @@ def NSLBI_dict_to_windows(NSLBI_dict, model, method_1C='ZP', detrend_method='mea
     :return windows: [(m, c, n) numpy.ndarray]
                     array of m-windows, c-channels, and n-samples sampled from
                     the contents of NSLBI_dict as specified by parameters
-                    contained within model._annotate_kwargs          
+                    contained within model._annotate_kwargs
+    :return swindex: [dictionary of lists]
+                    Station-Window-INDEX. Dictionary keyed with NSLBI keys
+                    (see stream_to_NSLBI_dict()) with the following two lists
+                    of index
+                    swindex[<key>][0] = 0-axis indices of the first and last 
+                                        windows belonging to <key> in `windows`
+                    swindex[<key>][1] = indices of the first sample in each
+                                        window belonging to the input stream for
+                                        a given NSLBI_dict[<key>]
     """
     swindex = {}
     last_sindex = 0
@@ -702,6 +723,7 @@ def normalize_windows(windows, method='max'):
 
     return windows
 
+
 def taper_windows(windows, ntaper=6):
     """
     Apply a cosine (Tukey) taper of a specified
@@ -828,23 +850,96 @@ def run_seisbench_pred(stream, model):
 ##########################
 
 
-def reassemble_multistation_preds(preds, swindex, model, st_dict,
-                                  mod_wt_code='EQ', pred_codes=['D', 'P', 'S']):
+def reassemble_multistation_preds(preds, swindex, model, NSLBI_dict,
+                                  mod_wt_code='EW', pred_codes=['D', 'P', 'S'],
+                                  merge_method=np.nanmax, trim=True):
+    """
+    Reassemble predictions from PyTorch model from multiple stations
+    into an obspy.core.stream.Stream using indexing from pre-processing 
+    data objects and the model.
+
+    This wraps subroutines:
+    _restructure_predictions()
+    _stack_to_stream()
+
+    :: INPUTS ::
+    :param preds: [(n, p, m) numpy.ndarray]
+                array of n-windows of p-prediction-types with m-modeled values
+                output by the PyTorch model prediction
+    :param swindex: [dict of tuples]
+                dictionary keyed with NSLBI codes that correspond to window
+                ownership indices. (See NSLBI_dict_to_windows())
+    :param model: [seisbench.models.<model_subclass>]
+                Model object used for prediction
+    :param NSLBI_dict: [dict of obspy.core.stream.Stream's]
+                Network-Station-Location-Band-Instrument sorted streams of
+                pre-processed data used to generate windowed data for
+                prediction (See stream_to_NSLBI_dict() for more info)
+    :param mod_wt_code: [2-character str]
+                Model and weight codes to assign to the
+                    Trace.stats.location attribute
+                
+                Model Codes, e.g.
+                E = EQTransformer (Mousavi et al., 2020;
+                                    Woollam et al., 2022)
+                P = PhaseNet (Zhu & Beroza, 2018)
+                G = GPD    (Ross et al., 2018)
+
+                Weight Codes, e.g.,
+                D = STEAD (Mousavi et al., 2019)
+                W = PNW (Ni et al., 2023)
+    :param pred_codes: [list of char]
+                Codes for prediction channel that take the place of the 
+                SEED component code on the Trace.stats.channel attribute.
+                
+                e.g.,
+                P = P probability
+                S = S probability
+                D = Detection probability (EQTransformer specific)
+                N = Noise probability (PhaseNet specific)
+
+                Note: The band and insturment codes for the SEED channel
+                name are coppied from the source_stream
+    :param merge_method: [method that operates on numpy.ndarrays]
+                Method for merging overlapping modeled values for a given 
+                prediction type
+                Suggested:  np.nanmax (default)
+                            np.nanmean
+    :param trim: [bool]
+                trim blinded samples off the output stream?
+
+    :: OUTPUT ::
+    :return pred_stream: [obspy.core.stream.Stream]
+                Stream object containing modeled values (predictions)
+                referenced to source-data timing leveraging metadata
+                contained in entries of NSLBI_dict. 
+
+                NOTE:
+                Use of the obspy.Stream class allows for ease of use
+                alongside source waveform data for visualization and
+                metadata-data coupling.
+
+                Sub-routines in this wrapper script might be used
+                as a code-base for faster I/O formatting (e.g., *.npy)
+                if metadata are handled in some other clear format in
+                your workflow.
+"""
     pred_stream = Stream()
     # Iterate across each station/instrument
     for _k in swindex.keys():
         # Get subset stream
-        _st_src = st_dict[_k]
+        _st_src = NSLBI_dict[_k]
         # Get subset swindex
         _swindex = swindex[_k]
         # Get subset of predictions
         _preds = preds[_swindex[0][0]:_swindex[0][1], :, :]
         # Make substack
-        _stack = _restructure_predictions(_preds, _swindex[1], model)
+        _stack = _restructure_predictions(_preds, _swindex[1], model,
+                                          merge_method=merge_method)
         # Convert substack to stream
-        _stream = _stack2stream(_stack, _st_src, model,
-                                mod_wt_code=mod_wt_code,
-                                pred_codes=pred_codes)
+        _stream = _stack_to_stream(_stack, _st_src, model,
+                                   mod_wt_code=mod_wt_code,
+                                   pred_codes=pred_codes, trim=trim)
         # Update pred_streams
         pred_stream += _stream
 
@@ -868,14 +963,14 @@ def _restructure_predictions(preds, windex, model, merge_method=np.nanmax):
                 window step size
     :param merge_method: [numpy.nanmax, numpy.nanmean, or similar]
                 method to use for merging overlapping samples.
-                MUST have handling for np.nan entries to prevent bleed of blinded
-                samples.
+                MUST have handling for np.nan entries to prevent bleed of
+                blinded samples.
     
     :: OUTPUT ::
     :return stack: [(cpred, npts) numpy.ndarray]
-                Array composed of row-vectors for each predicted parameter with 
-                blinded samples on either end of the entire section reassigned as
-                numpy.nan values.
+                Array composed of row-vectors for each predicted parameter with
+                blinded samples on either end of the entire section reassigned
+                as numpy.nan values.
     """
     # Get scale of prediction
     nwind, cpred, mdata = preds.shape
@@ -888,20 +983,21 @@ def _restructure_predictions(preds, windex, model, merge_method=np.nanmax):
     stack = np.full(shape=(cpred, npts), fill_value=np.nan, dtype=np.float32)
 
     # Iterate across windows
-    for _i, _wi in enumerate(windex):
+    for _i, _w in enumerate(windex):
         # Copy windowed prediction 
         _data = preds[_i, :, :].copy()
         # Apply blinding
         _data[:, :nlb] = np.nan
         _data[:, -nrb:] = np.nan
         # Attach predictions to stack
-        stack[:, _wi:_wi+mdata] = merge_method([stack[:, _wi:_wi+mdata], _data], axis=0)
+        stack[:, _w:_w+mdata] = merge_method([stack[:, _w:_w+mdata], _data],
+                                             axis=0)
      
     return stack
 
 
-def _stack2stream(stack, source_stream, model, mod_wt_code='EW', 
-                  pred_codes=['D', 'P', 'S'], trim=True):
+def _stack_to_stream(stack, source_stream, model, mod_wt_code='EW',
+                     pred_codes=['D', 'P', 'S'], trim=True):
     """
     Convert a prediction stack (or windowed data from `prepare_windows()`)
     into a formatted obspy.core.stream.Stream, using the metadata from the
