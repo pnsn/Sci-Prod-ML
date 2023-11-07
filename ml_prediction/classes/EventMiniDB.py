@@ -1,10 +1,10 @@
 """
-:module: util.verboseevent
+:module: ml_prediction.core.classes.EventMiniDB
 :purpose: provide multi-step data query workflows and support methods
           based on the usgs-libcomcat library:
           https://code.usgs.gov/ghsc/esi/libcomcat-python
           encapsulating data holding and method in a class:
-          VerboseEvent
+          minidb
 :auth: Nathan T. Stevens
 :email: ntsteven@uw.edu
 :origin: 16. October 2023
@@ -43,7 +43,7 @@ from pyrocko import model
 # import pyrocko.gui.marker as pm
 
 
-class VerboseEvent:
+class EventMiniDB:
     """
     This class acts as a container for associated DetailEvent,
     History_DataFrame, and Phase_DataFrame objects from `libcomcat`,
@@ -94,9 +94,9 @@ class VerboseEvent:
         :: OUTPUT ::
         :return VerboseEvent: [util.VerboseEvent]
         """
-        self.event=DetailEvent
-        self.history=history_DataFrame
-        self.phase=phase_DataFrame
+        self.event = DetailEvent
+        self.history = history_DataFrame
+        self.phase = phase_DataFrame
         self.waveforms=waveform_Stream
         self.inventory=inventory
         self.attributes=['event','history','phase','waveforms','inventory']
@@ -691,9 +691,9 @@ class VerboseEvent:
     #     """
 
 
-class VerboseCatalog:
+class MiniCat:
     """
-    A holder class for VerboseEvent class objects primarily for data exploration
+    A holder class for EventDB class objects primarily for data exploration
     and visualization methods operating on structured data contained within 
     a list of VerboseEvent objects.
     """
@@ -707,7 +707,7 @@ class VerboseCatalog:
                                               "event","history","phase","waveform","inventory"])
         self.inventory = Inventory()
         ## Do some data characterization/sanity checks during instantiation
-        if ~isinstance(verbose_catalog_list, list) and isinstance(verbose_catalog_list, VerboseCatalog):
+        if ~isinstance(verbose_catalog_list, list) and isinstance(verbose_catalog_list, MiniCat):
             self.events = list(verbose_catalog_list)
         elif isinstance(verbose_catalog_list, list):
             # Do sanity check on all elements of list
