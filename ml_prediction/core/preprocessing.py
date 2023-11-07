@@ -4,7 +4,7 @@
 :email: ntsteven at uw.edu
 :org: Pacific Northwest Seismic Network
 :license: MIT License (2023)
-:purpose: A series of pre-processing methods for converting an
+:purpose: A set of pre-processing methods for converting an
           arbitrary obspy.core.stream.Stream of waveform data
           into a set of preprocessed data windows ready to 
           convert into a PyTorch Tensor for prediction.
@@ -17,6 +17,13 @@
           Approaches herein build on code developed by Yiyu Ni
           for the ELEP project and conversations with Yiyu:
           https://github.com/congcy/ELEP/blob/main/docs/tutorials/example_BB_continuous_data_PB_B204.ipynb
+
+TODO: 
+- shift supporting routines to operate on streams and window subsets
+  so they can be placed inside the outer-loop iterating over the NSLBI
+  keys when preparing data. 
+  
+  This will allow for a more modular structure to pre-processing      
 """
 import numpy as np
 from tqdm import tqdm
@@ -490,6 +497,8 @@ def NSLBI_dict_to_windows(NSLBI_dict, model, method_1C='ZP', detrend_method='mea
 #########################################
 # Subroutines for NSLBI_dict_to_windows #
 #########################################
+
+
 def _stream_to_array(stream, band='?', inst='N', chanorder='ZNE', fill_value=np.nan):
     """
     Convert an arbitrary stream into an ordered numpy.ndarray `data`
