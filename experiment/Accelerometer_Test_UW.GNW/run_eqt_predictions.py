@@ -4,7 +4,7 @@ from glob import glob
 from tqdm import tqdm
 from seisbench.models import EQTransformer, WaveformModel
 sys.path.append(os.path.join('..','..'))
-import query.verboseevent as qve
+import ml_prediction.core.classes.EventMiniDB as qve
 from util.preprocess import split_streams, order_traces
 from util.translate import relabel_annotations
 

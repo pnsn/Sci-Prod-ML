@@ -15,7 +15,7 @@ from datetime import datetime
 from obspy.clients.fdsn import Client
 from libcomcat.search import search
 sys.path.append(os.path.join('..','..'))
-import query.verboseevent as qve
+import ml_prediction.core.classes.EventMiniDB as qve
 
 # For DEV only
 from importlib import reload
