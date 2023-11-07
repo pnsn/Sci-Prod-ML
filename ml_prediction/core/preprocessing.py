@@ -102,8 +102,6 @@ def initialize_EQT_model(sbm_model=sbm.EQTransformer.from_pretrained('pnw'),
     return model, device
 
 
-
-
 def prepare_windows_from_stream(stream, model, 
                                 fill_value=np.nan,
                                 merge_kwargs={'method': 1,
@@ -232,7 +230,7 @@ def prepare_windows_from_stream(stream, model,
 
 def stream_to_NSLBI_dict(stream,
                          merge_kwargs={'method': 1, 'interpolation_samples': 5},
-                         verbose=True):
+                         tqdm_disable=True):
     """
     Get unique combinations of network, station,
     and Band/Instrument codes of traces (characters
@@ -277,7 +275,7 @@ def stream_to_NSLBI_dict(stream,
             NSLBI_list.append(_nslbi)
     # Filter input Stream to split of subset streams
     st_list = []
-    for _nslbi in tqdm(NSLBI_list, disable=~verbose):
+    for _nslbi in tqdm(NSLBI_list, disable=tqdm_disable):
         select_kwargs = dict(zip(['network', 'station',
                                   'location', 'channel'],
                                  _nslbi.split('.')))
@@ -297,7 +295,7 @@ def homogenize_NSLBI_dict(NSLBI_dict, samp_rate=100,
                           interp_kwargs={'method': 'weighted_average_slopes',
                                          'no_filter': False},
                           resamp_kwargs={'window': 'hann'},
-                          trim_bound='median'):
+                          trim_bound='median', tqdm_disable=True):
     """
     Resample and pad data contained in an NSLBI dictionary to have uniform:
     1. sampling rates across NSLBI keyed entries
@@ -370,7 +368,7 @@ def homogenize_NSLBI_dict(NSLBI_dict, samp_rate=100,
     }
     """
     # Iterate across unique NSBI codes
-    for _k in NSLBI_dict.keys():
+    for _k in tqdm(NSLBI_dict.keys(), disable=tqdm_disable):
         _st = NSLBI_dict[_k].copy()
         _sr = _st[0].stats.sampling_rate
         # If upsampling data, use 'interpolate'
@@ -402,7 +400,7 @@ def homogenize_NSLBI_dict(NSLBI_dict, samp_rate=100,
     return NSLBI_dict
 
 
-def NSLBI_dict_to_windows(NSLBI_dict, model, method_1C='ZP', detrend_method='mean', norm_method='max', fill_value=np.nan):
+def NSLBI_dict_to_windows(NSLBI_dict, model, method_1C='ZP', detrend_method='mean', norm_method='max', fill_value=np.nan, tqdm_disable=True):
     """
     Take an arbitrary set of streams contained in a "NSLBI dictionary"
     and convert their data into a numpy.ndarray scaled for input to a
@@ -450,7 +448,7 @@ def NSLBI_dict_to_windows(NSLBI_dict, model, method_1C='ZP', detrend_method='mea
     """
     swindex = {}
     last_sindex = 0
-    for _k in NSLBI_dict.keys():
+    for _k in tqdm(NSLBI_dict.keys(), disable=tqdm_disable):
         # Get subset stream
         _st = NSLBI_dict[_k]
         # Convert into an ordered array (pre-tensor)

@@ -21,6 +21,7 @@
 """
 import numpy as np
 from obspy import Stream
+from tqdm import tqdm
 
 ##########################
 # Postprocessing Methods #
@@ -29,7 +30,8 @@ from obspy import Stream
 
 def reassemble_multistation_preds(preds, swindex, model, NSLBI_dict,
                                   mod_wt_code='EW', pred_codes=['D', 'P', 'S'],
-                                  merge_method=np.nanmax, trim=True):
+                                  merge_method=np.nanmax, trim=True,
+                                  tqdm_disable=True):
     """
     Reassemble predictions from PyTorch model from multiple stations
     into an obspy.core.stream.Stream using indexing from pre-processing 
@@ -104,7 +106,7 @@ def reassemble_multistation_preds(preds, swindex, model, NSLBI_dict,
 """
     pred_stream = Stream()
     # Iterate across each station/instrument
-    for _k in swindex.keys():
+    for _k in tqdm(swindex.keys(), disable=tqdm_disable):
         # Get subset stream
         _st_src = NSLBI_dict[_k]
         # Get subset swindex
