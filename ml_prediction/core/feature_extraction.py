@@ -1,7 +1,7 @@
 """
 :module: ml_prediction.core.feature_extraction
 :auth: Nathan T Stevens
-:email: ntsteven at uw.edu
+:email: ntsteven (at) uw.edu
 :org: Pacific Northwest Seismic Network
 :license: MIT (2023)
 :purpose: Provide extension of obspy.signal.trigger module
@@ -15,7 +15,8 @@ from obspy import UTCDateTime
 from obspy.signal.trigger import trigger_onset
 from pandas import Timestamp, DataFrame
 from pyrocko.gui.marker import Marker
-
+from scipy.optimize import leastsq
+from scipy.special import erf, erfc
 
 def format_timestamp(pick_object):
     """
@@ -29,25 +30,44 @@ def format_timestamp(pick_object):
     :: OUTPUT ::
     :return time: [float] epoch time
     """
-    if isinstance(pick_object,UTCDateTime):
+    if isinstance(pick_object, UTCDateTime):
         time = pick_object.timestamp
-    elif isinstance(pick_object,Timestamp):
+    elif isinstance(pick_object, Timestamp):
         time = pick_object.timestamp()
-    elif isinstance(pick_object,Marker):
+    elif isinstance(pick_object, Marker):
         time1 = pick_object.get_tmin()
         time2 = pick_object.get_tmax()
         if time1 == time2:
             time = time1
         else:
-            time = (time1 + time2)/2
+            time = (time1 + time2) / 2
     elif isinstance(pick_object, datetime):
         time = datetime
     else:
-        print('Input object of type %s not handled by this method'%(str(type(pick_object))))
+        print(
+            "Input object of type %s not handled by this method"
+            % (str(type(pick_object)))
+        )
         time = False
     return time
 
 
+def scaled_normal_pdf(p, x):
+    """
+    Model a scaled normal distribution (Gaussian)
+    with parameters:
+    p[0] = A       - Amplitude of the distribution
+    p[1] = mu      - Mean of the distribution
+    p[2] = sigma   - Standard deviation of the distribution
+
+    for sample locations x
+    """
+    y = p[0] * np.exp(-0.5 * ((x - p[1]) / p[2]) ** 2)
+    return y
+
+
+# def scaled_normal_cdf(p, x):
+#     y = p[0]*(0.5*(1. + erf((x - p[1])/p[2])
 
 def normal_pdf_error(p, x, y_obs):
     """
@@ -57,7 +77,7 @@ def normal_pdf_error(p, x, y_obs):
     p[1] = mu      - Mean of the distribution
     p[2] = sigma   - Standard deviation of the distribution
 
-    and X, y_obs data that may 
+    and X, y_obs data that may
 
     :: INPUTS ::
     :param p: [array-like] see above
@@ -68,12 +88,30 @@ def normal_pdf_error(p, x, y_obs):
     :return y_err: [array-like] misfit calculated as y_obs - y_cal
     """
     # Calculate the modeled y-values given positions x and parameters p[:]
-    y_cal = p[0]*np.exp(-0.5*((x - p[1])/p[2])**2)
-    y_err = (y_obs - y_cal)
+    y_cal = scaled_normal_pdf(p, x)
+    y_err = y_obs - y_cal
     return y_err
 
 
-def fit_probability_peak(prediction_trace, fit_thr_coef=0.1, mindata=30, p0=None):
+def est_curve_quantiles(x, y, q=[0.16, 0.5, 0.84], decimals=2):
+    """
+    Approximate the quantiles of an arbitrary y = f(x) curve
+    that is assumed to be a binned representation of a population sample
+    """
+    decimals = int(decimals)
+    pop_set = []
+    for _i, _x in enumerate(x):
+        _y = y[_i]
+        _ys = np.round(_y, decimals=decimals)*10**decimals
+        for _j in range(_ys):
+            pop_set.append(_x)
+    quants = np.quantile(pop_set, q)
+    return quants
+        
+
+
+def fit_probability_peak(prediction_trace, fit_thr_coef=0.1,
+                         mindata=30, p0=None):
     """
     Fit a normal distribution to an isolated peak in a phase arrival prediction trace from
     a phase picking/detection ML prediction in SeisBench formats.
@@ -97,7 +135,7 @@ def fit_probability_peak(prediction_trace, fit_thr_coef=0.1, mindata=30, p0=None
     :param p0:                [array-like]
                                 Initial normal distribution fit values
                                 Default is None, which assumes
-                                - amplitude = nanmax(data), 
+                                - amplitude = nanmax(data),
                                 - mean = mean(epoch_times where data >= threshold)
                                 - std = 0.25*domain(epoch_times where data >= threshold)
 
@@ -120,35 +158,42 @@ def fit_probability_peak(prediction_trace, fit_thr_coef=0.1, mindata=30, p0=None
     # Get thresholded index
     ind = data >= fit_thr_coef * np.nanmax(data)
     # Get epoch times of data
-    d_epoch = prediction_trace.times(type='timestamp')
+    d_epoch = prediction_trace.times(type="timestamp")
     # Ensure there are enough data for normal distribution fitting
     if sum(ind) >= mindata:
         x_vals = d_epoch[ind]
         y_vals = data[ind]
         # If no initial parameter values are provided by user, use default formula
         if p0 is None:
-            p0 = [np.nanmax(y_vals), np.nanmean(x_vals), 0.25*(np.nanmax(x_vals) - np.nanmin(x_vals))]
-        outs = leastsq(normal_pdf_error, p0,
-                       args=(x_vals, y_vals),
-                       full_output=True)
+            p0 = [
+                np.nanmax(y_vals),
+                np.nanmean(x_vals),
+                0.25 * (np.nanmax(x_vals) - np.nanmin(x_vals)),
+            ]
+        outs = leastsq(normal_pdf_error, p0, args=(x_vals, y_vals), full_output=True)
         amp, mean, std = outs[0]
         cov = outs[1]
         err = np.linalg.norm(normal_pdf_error(outs[0], x_vals, y_vals))
-    
+
         return amp, mean, std, cov, err, sum(ind)
-    
+
     else:
-        try:
-            return np.nanmax(data), float(d_epoch[np.argwhere(data = np.nanmax(data))]), np.nan, np.ones((3,3))*np.nan, np.nan, sum(ind)
-        except:
-            breakpoint()
+        return (
+            np.nanmax(data),
+            float(d_epoch[np.argwhere(data==np.nanmax(data))]),
+            np.nan,
+            np.ones((3, 3)) * np.nan,
+            np.nan,
+            sum(ind),
+        )
 
 
-def process_predictions(prediction_trace, et_obs=None, thr_on=0.1,
-                        thr_off=0.1, fit_pad_sec=0.1, fit_thr_coef=0.1,
-                        ndata_bounds=[30, 9e99]):
+def process_predictions(prediction_trace, et_obs=None,
+                        thr_on=0.1, thr_off=0.1, fit_pad_sec=0.1,
+                        fit_thr_coef=0.1, ndata_bounds=[30, 9e99],
+                        quantiles=[0.16, 0.5, 0.84]):
     """
-    Extract statistical fits of normal distributions to prediction peaks from 
+    Extract statistical fits of normal distributions to prediction peaks from
     ML prediction traces that trigger above a specified threshold.
 
     :: INPUTS ::
@@ -159,13 +204,14 @@ def process_predictions(prediction_trace, et_obs=None, thr_on=0.1,
         station/phase-type for `prediction_trace`
     :param thr_on:              [float] trigger-ON threshold value
     :param thr_off:             [float] trigger-OFF threshold value
-    :param fit_pad_sec:         [float] 
+    :param fit_pad_sec:         [float]
         amount of padding on either side of data bounded by trigger ON/OFF
         times for calculating Gaussian fits to the probability peak(s)
-    :param fit_thr_coef:[float] Gaussian fit data 
-    :param ndata_bounds [2-tuple of int] 
+    :param fit_thr_coef:    [float] Gaussian fit data
+    :param ndata_bounds:    [2-tuple of int]
         minimum & maximum count of data for each trigger window
-
+    :param quantiles:       [list of float]
+        quantile values to assess within a triggered 
     :: OUTPUT ::
     :return df_out:     [pandas.dataframe.DataFrame]
         DataFrame containing the following metrics for each trigger
@@ -189,58 +235,109 @@ def process_predictions(prediction_trace, et_obs=None, thr_on=0.1,
         'C_uo'      - covariance of model fit for u & o
     """
     # Define output column names
-    cols = ['et_on', 'et_off', 'p_scale', 'et_mean', 'et_max',
-            'det_obs_prob', 'et_std', 'L2 res', 'ndata',
-            'C_pp', 'C_uu', 'C_oo', 'C_pu', 'C_po', 'C_uo']
+    cols = [
+        "et_on",
+        "et_off",
+        "p_scale",
+        "et_mean",
+        "et_max",
+        "det_obs_prob",
+        "et_std",
+        "L2 res",
+        "ndata",
+        "C_pp",
+        "C_uu",
+        "C_oo",
+        "C_pu",
+        "C_po",
+        "C_uo",
+    ]
     # Get pick indices with Obspy builtin method
-    triggers = trigger_onset(prediction_trace.data,
-                             thr_on, thr_off,
-                             max_len=ndata_bounds[1],
-                             max_len_delete=True)
-    times = prediction_trace.times(type='timestamp')
+    triggers = trigger_onset(
+        prediction_trace.data,
+        thr_on,
+        thr_off,
+        max_len=ndata_bounds[1],
+        max_len_delete=True,
+    )
+    times = prediction_trace.times(type="timestamp")
     # Iterate across triggers:
     feature_holder = []
     for _trigger in triggers:
         _t0 = times[_trigger[0]]
         _t1 = times[_trigger[1]]
-        # If there are observed time picks provided, search for picks 
+        # If there are observed time picks provided, search for picks
         wind_obs = []
         if isinstance(et_obs, list):
             for _obs in et_obs:
                 if _t0 <= _obs <= _t1:
                     wind_obs.append(_obs)
-        _tr = prediction_trace.copy().trim(starttime=UTCDateTime(_t0) - fit_pad_sec,
-                                           endtime=UTCDateTime(_t1) + fit_pad_sec)
+        _tr = prediction_trace.copy().trim(
+            starttime=UTCDateTime(_t0) - fit_pad_sec,
+            endtime=UTCDateTime(_t1) + fit_pad_sec,
+        )
         # Conduct gaussian fit
-        outs = fit_probability_peak(_tr, fit_thr_coef=fit_thr_coef,
-                                    mindata=ndata_bounds[0])
+        outs = fit_probability_peak(
+            _tr, fit_thr_coef=fit_thr_coef, mindata=ndata_bounds[0]
+        )
         # Get timestamp of maximum observed data
-        et_max = _tr.times(type='timestamp')[np.argmax(_tr.data)]
-        
+        et_max = _tr.times(type="timestamp")[np.argmax(_tr.data)]
+
+        # Get times of quantiles:
+
+
         # Iterate across observed times, if provided
         # First handle the null
         if len(wind_obs) == 0:
             _det_obs_prob = np.nan
-            feature_line = [_t0, _t1, outs[0], outs[1], et_max,
-                            _det_obs_prob, outs[2], outs[4], outs[5],
-                            outs[3][0, 0], outs[3][1, 1], outs[3][2, 2],
-                            outs[3][0, 1], outs[3][0, 2], outs[3][1, 2]]
+            feature_line = [
+                _t0,
+                _t1,
+                outs[0],
+                outs[1],
+                et_max,
+                _det_obs_prob,
+                outs[2],
+                outs[4],
+                outs[5],
+                outs[3][0, 0],
+                outs[3][1, 1],
+                outs[3][2, 2],
+                outs[3][0, 1],
+                outs[3][0, 2],
+                outs[3][1, 2],
+            ]
             feature_holder.append(feature_line)
         # Otherwise produce one line with each delta time calculation
         elif len(wind_obs) > 1:
             for _wo in wind_obs:
                 _det_obs_prob = _wo - et_max
-                feature_line = [_t0, _t1, outs[0], outs[1], et_max,
-                                _det_obs_prob, outs[2], outs[4], outs[5],
-                                outs[3][0, 0], outs[3][1, 1], outs[3][2, 2],
-                                outs[3][0, 1], outs[3][0, 2], outs[3][1, 2]]
+                feature_line = [
+                    _t0,
+                    _t1,
+                    outs[0],
+                    outs[1],
+                    et_max,
+                    _det_obs_prob,
+                    outs[2],
+                    outs[4],
+                    outs[5],
+                    outs[3][0, 0],
+                    outs[3][1, 1],
+                    outs[3][2, 2],
+                    outs[3][0, 1],
+                    outs[3][0, 2],
+                    outs[3][1, 2],
+                ]
                 feature_holder.append(feature_line)
 
     df_out = DataFrame(feature_holder, columns=cols)
     return df_out
 
 
-def _pick_quality_mapping(X, grade_max=(0.02, 0.03, 0.04, 0.05, np.inf), dtype=np.int32):
+def _pick_quality_mapping(
+    X, grade_max=(0.02, 0.03, 0.04, 0.05, np.inf), dtype=np.int32
+):
     """
     Provide a mapping function between a continuous parameter X
     and a discrete set of grade bins defined by their upper bounds
@@ -252,10 +349,10 @@ def _pick_quality_mapping(X, grade_max=(0.02, 0.03, 0.04, 0.05, np.inf), dtype=n
                     a set of bins
     :param dtype: [type-assignment method] default nunpy.int32
                     type formatting to assign to output
-    
+
     :: OUTPUT ::
     :return grade: [dtype value] grade assigned to value
-    
+
     """
     # Provide sanity check that INF is included as the last upper bound
     if grade_max[-1] < np.inf:
@@ -267,17 +364,22 @@ def _pick_quality_mapping(X, grade_max=(0.02, 0.03, 0.04, 0.05, np.inf), dtype=n
         else:
             grade = np.nan
     return grade
-    
 
 
-def ml_prob_models_to_PICK2K_msg(feature_dataframe, pick_metric='et_mean',
-                                 std_metric='et_std', qual_metric='',
-                                 m_type=255, mod_id=123, org_id=1,
-                                 seq_no=0,):
+def ml_prob_models_to_PICK2K_msg(
+    feature_dataframe,
+    pick_metric="et_mean",
+    std_metric="et_std",
+    qual_metric="",
+    m_type=255,
+    mod_id=123,
+    org_id=1,
+    seq_no=0,
+):
     """
     Convert ml pick probability models into Earthworm PICK2K formatted
     message strings
-    -- FIELDS -- 
+    -- FIELDS --
     1.  INT Message Type (1-255)
     2.  INT Module ID that produced this message: codes 1-255 signifying, e.g., pick_ew, PhaseWorm
     3.  INT Originating installation ID (1-255)
@@ -296,7 +398,7 @@ def ml_prob_models_to_PICK2K_msg(feature_dataframe, pick_metric='et_mean',
     16. INT Hour
     17. INT Minute
     18. INT Second
-    19. INT Millisecond 
+    19. INT Millisecond
     20. INT Amplitude of 1st peak after arrival (counts?)
     21. INT Amplitude of 2nd peak after arrival
     22. INT Amplitude of 3rd peak after arrival
@@ -305,15 +407,15 @@ def ml_prob_models_to_PICK2K_msg(feature_dataframe, pick_metric='et_mean',
     """
     msg_list = []
     for _i in range(len(feature_dataframe)):
-        _f_series = feature_dataframe.iloc[_i,:]
+        _f_series = feature_dataframe.iloc[_i, :]
         grade = _pick_quality_mapping(_f_series[qual_metric])
         # Fields 1, 2, 3, 4
-        fstring =  f'{m_type:3d}{mod_id:3d}{org_id:3d} '
+        fstring = f"{m_type:3d}{mod_id:3d}{org_id:3d} "
         # Fields 5 - 8
-        fstring += f'{seq_no:4d} {_f_series.sta:-5s}{_f_series.net:-2s}'
-        fstring += f'{_f_series.cha:-3s} '
-        # Fields 10 - 
+        fstring += f"{seq_no:4d} {_f_series.sta:-5s}{_f_series.net:-2s}"
+        fstring += f"{_f_series.cha:-3s} "
+        # Fields 10 -
         # fstring += f' {}
         msg_list.append(fstring)
-    
+
     return msg_list
