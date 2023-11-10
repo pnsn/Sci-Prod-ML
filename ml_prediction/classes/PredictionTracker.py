@@ -16,6 +16,7 @@ from copy import deepcopy
 from obspy import Stream
 sys.path.append('..')
 import core.preprocessing as prep
+import core.postprocessing as post
 
 
 class InstrumentPredictionTracker:
@@ -149,24 +150,101 @@ class InstrumentPredictionTracker:
         self.prep_stream = _st
         return None
 
-    def
+    def 
 
 
-    def __fill_masked_trace_data__(self, dtype = np.float32, fill_value = np.nan, from_raw=False):
+    def __fill_masked_trace_data__(self, fill_value, dtype = np.float32, from_raw=False):
         """
         If a given trace is masked, fill masked values with a specified value
         and return the data array of that trace
 
         :: INPUTS ::
+        :param fill_value: [dtype-like]
+                    Value to fill in places where 
         :param dtype: [numpy.float32], [float-like], or [None]
                     output data format specification
                     If specified, must be compliant with the numpy.ndarray kwarg `dtype`.
                     If None, do not enforce a set dtype for output
                     Default is numpy.float32
-        :param fill_value: [dtype-like]
-                    Value to fill in places where 
+        :param from_raw: [bool]
+                    Pull initial data from raw?
+                    False = pull data from self.prep_stream
+
+        :: OUTPUTS ::
+        No direct outputs. Result is written to self.prep_stream
+        """
+        if from_raw:
+            _st = self.raw_stream.copy()
+        else:
+            _st = self.pred_stream
+        
+        for _tr in _st:
+            if np.ma.
+        
+
+    def output_windows(self, astensor=True):
+        """
+        Return self.windows with the option as formatting
+        as a torch.Tensor and write last last window to 
+        the self.last_window attribute
+
+        :: INPUTS ::
+        :param astensor: [BOOL]
+                should the output be a torch.Tensor?
+                False = output numpy.ndarray
+        :: OUTPUT ::
+        :return self.windows: 
+        """
+        if isinstance(self.windows, np.array)
+    
+            self.last_window = self.windows[-1, :, :]
+            if astensor:
+                return torch.Tensor(self.windows)
+            else:
+                return self.windows
+        else:
+            return None
+
+    ################################
+    # POSTPROCESSING CLASS-METHODS #
+    ################################
+
+    def ingest_preds(self, preds, merge_method='max'):
+        """
+        Receive numpy.ndarray of windowed predictions and merge into 
+        """
+        _widx = self.windex
+        _mod = self.model
+        # Conduct merge from predictions to stack
+        stack = post._restructure_predictions(
+            preds,
+            _widx,
+            _mod,
+            merge_method=merge_method
+        )
+
+        # 
+
+        # Get index of last prediction (from a temporal standpoint)
+        _lw = np.argmax(windex)
+        # (over)write self.last_pred 
+        self.last_pred = preds[_lw, :, :]
+
+
+    def preps_to_disk(self, loc, fmt='MSEED'):
+        """
+        Write pre-procesed stream to disk
         """
 
+    def preds_to_disk(self, loc, fmt='MSEED'):
+        """
+        Write prediction traces to disk
+        """
+
+    #########################
+    # PRIVATE CLASS-METHODS #
+    #########################
+    
     def __update_lasts_prep__(self):
         """
         Update self.last_window_raw and self.last_window
@@ -193,28 +271,7 @@ class InstrumentPredictionTracker:
     def __flush_predictions__(self):
 
 
-    def output_windows(self, astensor=True):
-        """
-        Return self.windows with the option as formatting
-        as a torch.Tensor and write last last window to 
-        the self.last_window attribute
-
-        :: INPUTS ::
-        :param astensor: [BOOL]
-                should the output be a torch.Tensor?
-                False = output numpy.ndarray
-        :: OUTPUT ::
-        :return self.windows: 
-        """
-        if isinstance(self.windows, np.array)
     
-            self.last_window = self.windows[-1, :, :]
-            if astensor:
-                return torch.Tensor(self.windows)
-            else:
-                return self.windows
-        else:
-            return None
         
 
 def default_pp_kwargs():
@@ -238,6 +295,24 @@ class PredictionTracker:
 
     def __repr__(self):
         return list(self.stations.keys())
+
+
+    # def __add__(self, other):
+    #     """
+    #     Add two PredictionTrackers or a PredictionTracker and 
+    #     an InstrumentPredictionTracker
+
+    #     :param other: [PredictionTracker] or [InstrumentPredictionTracker]
+    #     """
+    #     if isinstance(other, InstrumentPredictionTracker):
+    #         other = 
+
+    def copy(self):
+        """
+        Create a deepcopy of the PredictionTracker object
+        """
+        return deepcopy(self)
+
 
     def run_preprocessing(self):
         for _k in self.stations.keys():
