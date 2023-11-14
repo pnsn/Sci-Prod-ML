@@ -96,7 +96,7 @@ def est_curve_quantiles(x, y, q=[0.16, 0.5, 0.84]):
     return qx, qy
 
 
-def est_curve_normal_stats(x, y, dtype=np.float32):
+def est_curve_normal_stats(x, y, fisher=False, dtype=np.float32):
     """
     Estimate the mean and standard deviation of a population represented
     by a discrete, evenly sampled function y = f(x), using y as weights
@@ -106,29 +106,58 @@ def est_curve_normal_stats(x, y, dtype=np.float32):
     and the weighted standard deviation:
     https://www.itl.nist.gov/div898/software/dataplot/refman2/ch2/weightsd.pdf
 
+    Estimates of skewness and kurtosis are made using the 
+    weighted formulation for the 3rd and 4th moments described here:
+    https://www.mathworks.com/matlabcentral/answers/10058-skewness-and-kurtosis-of-a-weighted-distribution
+
     :: INPUTS ::
     :param x: [array-like] independent variable values (population bins)
     :param y: [array-like] dependent variable values (weights)
+    :param fisher:
     :param dtype: [type] output type formatting
                     default is numpy.float32
     :: OUTPUTS ::
-    :return wmean: [dtype] weighted mean
-    :return wstd: [dtype] weighted std
+    :return est_mean: [dtype] y-weighted mean estimate
+    :return est_std:  [dtype] y-weighted std estimate
+    :return est_skew: [dtype] y-weighted skewness estimate
+    :return est_kurt: [dtype] y-weighted kurtosis estimate
     """
     if ~isinstance(x, np.ndarray):
         x = np.array(x)
     if ~isinstance(y, np.ndarray):
         y = np.array(y)
+    # Remove the unweighted mean (perhaps redundant)
     dx = x - np.nanmean(x)
+    # Calculate y-weigted mean of delta-X values
     dmean = np.nansum(dx * y) / np.nansum(y)
+    # Then add the unweighted mean back in
+    est_mean = dmean + np.nanmean(x)
+
+    # Calculate the y-weighted standard deviation of delta-X values
+    # Compose elements
+    # Numerator
     std_num = np.nansum(y * (dx - dmean) ** 2)
+    # N-prime: number of non-zero (finite) weights
     Np = len(y[(y > 0) & (np.isfinite(y))])
+    # Denominator
     std_den = (Np - 1.0) * np.nansum(y) / Np
-    wstd = np.sqrt(std_num / std_den)
+    # Compose full expression for y-weighted std
+    est_std = np.sqrt(std_num / std_den)
 
-    wmean = dmean + np.nanmean(x)
+    # Calculate weighted 3rd moment
+    wm3 = np.nansum(y * (dx - dmean) ** 3.0) / np.nansum(y)
+    # And weighted skewness
+    est_skew = wm3 / est_std**3.0
 
-    return dtype(wmean), dtype(wstd)
+    # Calculate weighted 4th moment
+    wm4 = np.nansum(y * (dx - dmean) ** 4.0) / np.nansum(y)
+    # And weighted kurtosis
+    est_kurt = wm4 / est_std**4.0
+    if fisher:
+        est_kurt -= 3.0
+
+    # Calculate weighted 4th moment (kurtosis)
+    return dtype(est_mean), dtype(est_std), dtype(est_skew), dtype(est_kurt)
 
 
 def process_est_prediction_stats(
@@ -167,6 +196,8 @@ def process_est_prediction_stats(
             'et_mean'   Epoch mean probability time
             'p_mean'    Mean probability value
             'dt_std'    Delta time standard deviation [seconds]
+            'skew'      Estimated skewness of probability distribution
+            'kurt'      Estimated kurtosis of probability distribution
             'pdata'     Number of data used for statistical measures
             'et_med'    Epoch median probability time
             'p_med'     Median probability value
@@ -187,7 +218,9 @@ def process_est_prediction_stats(
         "et_mean",
         "p_mean",
         "dt_std",
-        "ndata",
+        "skew",
+        "kurt",
+        "pdata",
         "et_med",
         "p_med",
         "dt_q1",
@@ -225,7 +258,7 @@ def process_est_prediction_stats(
         _times = times[ind]
         _preds = preds[ind]
         # Run gaussian statistics
-        et_mean, dt_std = est_curve_normal_stats(_times, _preds)
+        et_mean, dt_std, skew, kurt = est_curve_normal_stats(_times, _preds)
         p_mean = _preds[np.argmin(np.abs(et_mean - _times))]
         # Run quantiles
         et_q, p_q = est_curve_quantiles(_times, _preds, q=quants)
@@ -237,6 +270,8 @@ def process_est_prediction_stats(
             et_mean,
             p_mean,
             dt_std,
+            skew,
+            kurt,
             len(_times),
             et_q[0],
             p_q[0],
