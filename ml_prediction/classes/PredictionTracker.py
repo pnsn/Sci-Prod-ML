@@ -13,42 +13,65 @@ import sys
 import torch
 import numpy as np
 from copy import deepcopy
-from obspy import Stream
+from obspy import Stream, Trace
 sys.path.append('..')
 import core.preprocessing as prep
 import core.postprocessing as post
 
 
-class InstrumentPredictionTracker:
+# class PredStreamTracker(Stream):
+
+#     def __init__(self, prep_stream=None, model=None):
+#         # Bring in everything obspy.core.stream.Stream has to offer!
+#         super().__init__()
+#         self.
+
+
+
+class Tracker:
     """
     This class provides a structured pre-processing and post-processing object for 
     waveform data and continuous prediction outputs from a machine learning model
     at the granularity of a single seismic instrument: i.e., 1-C or 3-C data
     """
 
-
-
     def __init__(self, raw_stream=None, model=None, winlen=6000, winstep=3000, resamp_rate=100):
         # Metadata attributes
         self.stats = None
         # Stream attributes
         self.raw_stream = raw_stream
-        self.last_windowed_raw = None
-        self.prep_stream = None
-        self.pred_stream = None
-        # Model/hyper-parameter attributes
-        self.model = model
-        self.winlen = winlen
-        self.winstep = winstep
-        self.resamp_rate = resamp_rate
-        self.nwinds = None
-        self.processing_log = []
+        self._last_windowed_stream = Stream()
+        self.prep_stream = Stream()
+        # Indices
+        self.last_timestamp = None
+        self.last_
         # Numpy ndarray attributes
         self.windows = None
-        self.last_window = None
-        self.preds = None
-        self.last_pred = None
+        self._last_window_starttime = None
+        self.predictions = None
+        self._last_pred = None
 
+        if isinstance(raw_stream, (Stream, Trace)):
+            if isinstance(raw_stream, Trace):
+                self.raw_stream = Stream(self.raw_stream)
+            if len(self.raw_stream) > 0:
+                SNCL_list = []
+                for _tr in self.raw_stream:
+                    net = self.raw_stream[0].stats.network
+                    sta = self.raw_stream[0].stats.station
+                    loc = self.raw_stream[0].stats.location
+                    cha = f'{self.raw_stream[0].stats.channel[:2]}?'
+                    if (sta, net, cha, loc) not in SNCL_list:
+                        SNCL_list.append((sta, net, cha, loc))
+                if len(SNCL_list) == 1:
+                    self.stats = dict(zip(['station','network','channel','location'],
+                                          [sta, net, cha, loc]))
+                elif len(SNCL_list) == 0:
+                    pass
+                else:
+                    print(f'Multiple ({len(SNCL_list)}) SNCL combinations detected!')
+                    
+                    
     
     def __repr__(self):
         repr =  f'=== windowing ===\n'
@@ -66,54 +89,86 @@ class InstrumentPredictionTracker:
 
     def copy(self):
         """
-        Return a deepcopy of the PredictionTracker
+        Return a deepcopy of the InstrumentPredictionTracker
         """
         return deepcopy(self)
     
 
-    def group(self, from_raw=True, order='Z3N1E2', kwargs={'method':1}):
+    def order_raw(self, order='Z3N1E2', merge_kwargs={'method':1}):
         """
         Merge and order traces into a vertical, horizontal1, horizontal2 order,
-        with specified kwargs for obspy.stream.Stream.merge() and put streams
-        writing to self.prep_stream.
+        with specified merge_kwargs for obspy.stream.Stream.merge(). 
+        
+        Acts in-place on self.raw_stream
         
         :: INPUTS ::
-        :param from_raw: [bool] 
-                        Should the method use the self.raw_stream data as 
-                        an input?
-                            True  = Try to use self.raw_stream
-                            False = Try to use self.prep_stream
         :param order: [str]
                         Order of channel codes. Generally shouldn't change
                         from the default
-        :param kwargs: [dict]
+        :param merge_kwargs: [dict]
                         key-word-arguments for obspy.stream.Stream.merge()
-        
-        :: OUTPUT ::
-        No output, results in populating self.prep_stream if successful
-        """
-        if from_raw:
-            self.prep_stream = self.raw_stream.merge(**kwargs)
-        elif ~from_raw and isinstance(self.prep_stream, Stream):
-            self.prep_stream = self.prep_stream.merge(**kwargs)
-        else:
-            print(f'self.prep_stream is {type(self.prep_stream)} -- invalid')
-            return None
-        
-        _stream = Stream()
 
+        :: OUTPUT ::
+        No output, results in merged, ordered self.raw_stream if successful
+        """
+        # Create holder stream
+        _stream = Stream()
+        # Iterate across channel codes from order       
         for _c in order:
-            _st = self.prep_stream.select(channel=f'??{_c}')
-            if len(_st) >= 1:
+            # Subset data and merge from raw_stream
+            _st = self.raw_stream.select(channel=f'??{_c}').copy().merge(**merge_kwargs)
+            # if subset stream is now one stream, add to holder stream 
+            if len(_st) == 1:
                 _stream += _st
-        self.prep_stream = _stream
+        # Overwrite raw
+        self.raw_stream = _stream
+        # Add information to log
+        if 'raw' in list(self.log.keys()):
+            self.log['raw'].append('order')
+        else:
+            self.log.update({'raw':['order']})
         return None
 
 
-    def resample(self, samp_rate,
-                 interp_kwargs={'method': 'weighted_average_slopes','no_filter': False},
-                 resamp_kwargs={'window': 'hann', 'no_filter': False},
-                 from_raw=False):
+    def __to_prep__(self):
+        """
+        Convenience method for copying self.raw_stream to 
+        self.prep_stream
+        """
+        self.prep_stream = self.raw_stream.copy()
+
+
+    def filter(self, ftype, from_raw=True, **kwargs):
+        """
+        Filter data using obspy.core.stream.Stream.filter() class-method
+        with added option of data source
+
+        :: INPUTS ::
+        :param ftype: [string]
+                `type` argument for obspy.core.stream.Stream.filter()
+        :param from_raw: [bool]
+                True = copy self.raw_stream and filter the copy
+                False = filter self.prep_stream in-place
+        :param **kwargs: [kwargs]
+                kwargs to pass to obspy.core.stream.Stream.filter()
+        
+        """
+        if from_raw:
+            _st = self.raw_stream.copy()
+        else:
+            _st = self.prep_stream
+        self.prep_stream = _st.filter(ftype, **kwargs)
+        if 'prep' in list(self.log.keys()):
+            self.log['prep'].append('filter')
+        else:
+            self.log.update({'prep':['filter']})
+
+        
+
+    def homogenize(self, samp_rate,
+                   interp_kwargs={'method': 'weighted_average_slopes','no_filter': False},
+                   resamp_kwargs={'window': 'hann', 'no_filter': False},
+                   trim_method='max', from_raw=False):
         """
         Resample waveform data using ObsPy methods for a specified
         target `samp_rate` using Trace.interpolate() to upsample and
@@ -127,11 +182,19 @@ class InstrumentPredictionTracker:
         :param resamp_kwargs: [dict]
                         key-word-arguments to pass to Trace.resample()
                         for downsampling
+        :param trim_method: [string] or [None]
+                        None: apply no padding
+                        'max': trim to earliest starttime and latest endtime
+                               contained in source stream
+                        'min': trim to latest starttime and earliest endtime
+                               contained in source stream
+                        'med': trim to median starttime and endtime contained
+                               in source stream
         :param from_raw: [BOOL]
                         Should data be sourced from self.raw_stream?
                         False --> source from self.prep_stream
         :: OUTPUT ::
-        No explicit outputs. Updated data are written to self.prep_stream
+        No outputs. Updated data are written to self.prep_stream
         """
         if from_raw:
             _st = self.raw_stream.copy()
@@ -140,17 +203,45 @@ class InstrumentPredictionTracker:
         else:
             print(f'self.prep_stream is {type(self.prep_stream)} -- invalid')
             return None
-
+        ts_list = []
+        te_list = []
         for _tr in _st:
+            ts_list.append(_tr.stats.starttime.timestamp)
+            te_list.append(_tr.stats.endtime.timestamp)
             if _tr.stats.sampling_rate < samp_rate:
                 _tr.interpolate(samp_rate, **interp_kwargs)
             elif _tr.stats.sampling_rate > samp_rate:
                 _tr.resample(samp_rate, **resamp_kwargs)
         
+        if trim_method is not None:
+            # Minimum valid window
+            if trim_method in ['min','Min','MIN','minimum','Minimum','MINIMUM']:
+                # Save trimmed segment without padding to self._last_raw_stream
+                self._last_raw_stream += _st.trim(starttime=UTCDateTime(np.nanmin(te_list)))
+                # Trim segment
+                _st = _st.trim(starttime=UTCDateTime(np.nanmax(ts_list)),
+                                endtime=UTCDateTime(np.nanmin(te_list)),
+                                pad=True)
+            # Maximum window
+            elif trim_method in ['max','Max','MAX','maximum','Maximum','MAXIMUM']:
+                # Trim and pad
+                _st = _st.trim(starttime=UTCDateTime(np.nanmin(ts_list)),
+                                endtime=UTCDateTime(np.nanmax(te_list)),
+                                pad=True)
+            # Median-defined window
+            elif trim_method in ['med','Med','MED','median','Median','MEDIAN']:
+                # Save trimmed segment without padding to self._last_raw_stream
+                self._last_raw_stream += _st.trim(starttime=UTCDateTime(np.nanmedian(te_list)))
+                # Trim segment
+                _st = _st.trim(starttime=UTCDateTime(np.nanmedian(ts_list)),
+                                endtie=UTCDateTime(np.nanmedian(te_list)),
+                                pad=True)
+            else:
+                print(f'Invalid value for trim_method {trim_method}')
+        # Update prep_stream
         self.prep_stream = _st
         return None
 
-    def 
 
 
     def __fill_masked_trace_data__(self, fill_value, dtype = np.float32, from_raw=False):
