@@ -1,12 +1,14 @@
 """
-:module: PredictionTracker.py
+:module: Tracker.py
 :auth: Nathan T. Stevens
 :email: ntsteven (at) uw.edu
 :org: Pacific Northwest Seismic Network
 :license: MIT (2023)
-:purpose: This module contains the Tracker class used to wrap data 
-          ingestion, pre-processing, ML prediction, and post-processing 
-          while keeping track of 
+:purpose: This module contains the Tracker class used to pre-process
+          post-process, and book-keep event-based streaming waveform
+          data for near-real-time ML prediction for a single given
+          instrument (1-3 orthogonal data channels) at a given seismic
+          station. 
 """
 import os
 import sys
@@ -15,7 +17,8 @@ import numpy as np
 from time import time
 from copy import deepcopy
 from obspy import Stream, Trace, read, UTCDateTime
-from pyrocko import obspy_compat
+# Buried dependency - see Tracker.snuffle()
+# from pyrocko import obspy_compat
 
 sys.path.append("..")
 import core.preprocessing as prep
@@ -77,6 +80,94 @@ class Tracker:
     This class provides a structured pre-processing and post-processing object for
     waveform data and continuous prediction outputs from a machine learning model
     at the granularity of a single seismic instrument: i.e., 1-C or 3-C data
+
+    :: INPUTS ::
+    :param raw_stream: [obspy.core.stream.Stream]
+                Stream object that is either empty or contains data from a single
+                seismic instrument with 1-3 channels where the only difference in
+                SNCL codes between traces are the 3rd character in the channel name
+                (SEED component code)
+    :param config: [dict of dicts]
+                Dictionary containing a script for pre-processing sequencing as keys
+                and dictionaries in the primar value positions that are passed as 
+                class-method arguments via the **value syntax.
+
+    :: ATTRIBUTES ::
+    ++ PUBLIC ++
+    :attr name:         [str] SNCL name of instrument
+    
+    :attr SNCL:         [dict] explicit dictionary of SNCL name elements
+
+    :attr raw_stream:   [obspy.core.stream.Stream] 
+                        unaltered waveform data used as a reference/back-up
+                        in-memory data packet from which pre-processing steps start.
+                        Sequential uses of the tracker re-introduce data fragments
+                        saved in self._last_raw_stream (see below). There is a single
+                        class-method that acts on data held in self.raw_stream:
+                        see:    self.order_raw()
+
+    :attr prep_stream:  [obspy.core.stream.Stream]
+                        progressively altered waveform data subject to preprocessing
+                        class-methods.
+                        see:    self.filter()
+                                self.homogenize()
+                                self.window() [input]
+
+    :attr windows:      [(mwindows, 3, npts_window) numpy.ndarray]
+                        array of windowed data that are subject to further preprocessing
+                        class-methods.
+                        see:    self.window()
+                                self.normalize()
+                                self.taper()
+
+    :attr predictions:  [(mwindows, 3, npts_window) numpy.ndarray]
+                        array of windowed, modeled values (ML "predictions") received from
+                        a segmented ML output. 
+
+    :attr pred_stream:  [obspy.core.stream.Stream]
+                        contains traces of merged prediction windows output from ML prediction
+                        operations with header information scraped from the following attributes.
+                            self._ref_t0 - starttime
+                            self._last_raw_stream - trace.stats template
+                            self._resamp_rate - sampling_rate
+                            self._last_prediction_window - continuity of iterative predicitons
+    ~~ BUFFER ~~
+    :attr _last_raw_stream:         [obspy.core.stream.Stream]
+                                    Stream containing raw data corresponding to the
+                                    last window generated, plus any trailing data that were
+                                    residual due to an insufficient amount to form a full window
+                                    Attribute is populated near the end of class-method
+                                    window() and the data are coppied to raw_stream when new
+                                    data are ingested.
+
+    :attr _last_prediction_window:  [(1, 3, _npts_window) numpy.ndarray]
+                                    the last prediction window (prediction[-1, :, :]) from the
+                                    previous call of prediction_to_stream(). See class-method
+                                    prediciton_to_stream() for more information.
+
+    -- PRIVATE --
+    :attr _config:      [dict] (private) see INPUTS
+
+    :attr _resamp_rate: [int32] (private) 
+                        resampling rate to apply to all data
+                    TODO: provide an enforcement rule in self.homogenize() that 
+                          over-rules a user-passed argument?
+
+    :attr _npts_window: [int32] (private) 
+                        window length in number of points for windows passed to ML prediction routines. 
+                    NOTE: this parameter is method-specific, e.g.,
+                            EQTransoformer: 6000
+                            PhaseNet: 3000
+
+    :attr _npts_step:   [int32] (private)
+                        window stride length (complement to overlap) for successive
+                        windows passed to ML prediciton routines
+                    NOTE: must be less than _npts_window by a value
+
+    :attr _ref_t0:      [time.timestamp]  (private)
+                        epoch starttime of the most recently ingested  waveform 
+                        data packet.
+                    TODO: need to build in clearer update rules
     """
 
     def __init__(self, raw_stream=Stream(), config=example_config()):
@@ -87,6 +178,9 @@ class Tracker:
         self._resamp_rate = None
         self._npts_window = None
         self._npts_step = None
+        self._raw_tags = []
+        self._prep_tags = []
+        self._window_tags = []
         # Buffers
         self._ref_t0 = None
         self._last_raw_stream = Stream()
@@ -96,6 +190,7 @@ class Tracker:
         self.raw_stream = raw_stream
         self.prep_stream = Stream()
         self.pred_stream = Stream()
+
         # Numpy ndarray attributes
         self.windows = None
         self.predictions = None
@@ -130,26 +225,35 @@ class Tracker:
                     print(f"Multiple ({len(SNCL_list)}) SNCL combinations detected!")
 
     def __repr__(self):
+        # Show Name
         repr = f"Tracker: {self.name}\n"
-        repr += f"Resamp_Rate:  {self._resamp_rate:4d} sps\n"
-        repr += f"Npts_Window: {self._npts_window:5d} samples\n"
-        repr += f"Npts_Step:   {self._npts_step:5d} samples\n"
-        repr += "=== lasts ===\n"
-        repr += f'-'
-        repr += f"-raw stream-\n{self._last_raw_stream}\n"
-        repr += f"-window t0-\n{self._last_window_t0}\n"
+        # Conditionally show sampling information
+        if isinstance(self._resamp_rate, (float, int)):
+            repr += f"Resamp_Rate:  {self._resamp_rate:4d} sps\n"
+        if isinstance(self._npts_window, int):
+            repr += f"Npts_Window: {self._npts_window:5d} samples\n"
+        if isinstance(self._npts_step, int):
+            repr += f"Npts_Step:   {self._npts_step:5d} samples\n"
+        # Show Buffer contents
+        repr += "~~~ buffer ~~~\n"
+        repr += f"-ref t0-\n{self._ref_t0}\n"
+        repr += f"-raw-\n{self._last_raw_stream}\n"
         repr += f"-pred-\n{self._last_prediction_window}\n"
-
-        if len(self.raw_stream) > 0:
-            repr += "=== raw ===\n"
-            repr += f"{self.raw_stream}\n"
-
+        # Show raw data
+        repr += "=== raw data ===\n"
+        repr += f"{self.raw_stream}\n"
+        repr += f"tags: {self._raw_tags}\n"
+        # Conditionally show preprocessed data
         if len(self.prep_stream) > 0:
-            repr += "=== prep ===\n"
+            repr += "=== preprocess ===\n"
             repr += f"{self.prep_stream}\n"
+            repr += f"tags: {self._prep_tags}\n"
+        # Conditionally show shape of windows
         if isinstance(self.windows, np.ndarray):
             repr += "=== windows ===\n"
             repr += f"shape: {self.windows.shape}\n"
+            repr += f"tags: {self._window_tags}\n"
+            # TODO: add some log of applied processing steps
         if isinstance(self.predictions, np.ndarray):
             repr += "=== preds ===\n"
             repr += f"shape: {self.predictions.shape}\n"
@@ -172,71 +276,8 @@ class Tracker:
         """
         self.prep_stream = self.raw_stream.copy()
 
-    # def _windows_to_stream(self):
 
-    def _prep_comparison_stream(self):
-        _st = Stream()
-        if isinstance(self.raw_stream, Stream) and len(self.raw_stream) > 0:
-            _str = self.raw_stream.copy()
-            for _tr in _str:
-                _tr.stats.location = "(r)"
-                _st += _tr
-        if isinstance(self.prep_stream, Stream) and len(self.prep_stream) > 0:
-            _stp = self.prep_stream.copy()
-            for _tr in _stp:
-                _tr.stats.location = "(p)"
-                _st += _tr
-        if isinstance(self.pred_stream, Stream) and len(self.pred_stream) > 0:
-            _stx = self.pred_stream.copy()
-            for _tr in _stx:
-                _st += _tr
-        return _st
-
-    def plot(self, *args, **kwargs):
-        """
-        Use Obspy Plotting utilties to visualize contents of a Tracker
-
-        Plot a temporary copy of contents of self.raw_stream and
-        self.prep_stream with appended channel codes (r) and (p)
-        respectively. Uses the syntax of obspy.core.stream.Stream.plot()
-
-        :: INPUTS ::
-        :param *args: Gather positional arguments to pass to Stream.plot()
-        :param **kwargs: Gather key-word arguments to pass to Stream.plot()
-
-        :: OUTPUT ::
-        :return outs: Standard output from Stream.plot()
-        """
-        _st = self._prep_comparison_stream()
-
-        outs = _st.sort(keys=["channel"], reverse=True).plot(*args, **kwargs)
-        return outs
-
-    def snuffle(self, *args, **kwargs):
-        """
-        Use Pyrocko Plotting utilities to visualize contents of a Tracker
-
-        Provide a way to view Stream-formatted contents of a Tracker
-        using the pyrocko.obspy_compat extension to Stream class-methods
-        Stream.snuffle().
-
-        Runs obspy_compat.plant() if it had not been run prior to running this
-        class method by checking if Stream.snuffle() returns AttributeError.
-
-        :: INPUTS ::
-        :param *args: Collect positional arguments for Stream.snuffle()
-        :param **kwargs: Collect key-word arguments for Stream.snuffle()
-
-        :: OUTPUT ::
-        :return outs: Return standard out of Stream.snuffle()
-        """
-        _st = self._prep_comparison_stream()
-        try:
-            outs = _st.snuffle(*args, **kwargs)
-        except AttributeError:
-            obspy_compat.plant()
-            outs = _st.snuffle(*args, **kwargs)
-        return outs
+    
 
     def order_raw(self, order="Z3N1E2", merge_kwargs={"method": 1}):
         """
@@ -266,6 +307,7 @@ class Tracker:
                 _stream += _st
         # Overwrite raw
         self.raw_stream = _stream
+        self._raw_tags.append('ordered')
         return None
 
     def filter(self, ftype, from_raw=True, **kwargs):
@@ -288,6 +330,9 @@ class Tracker:
         else:
             _st = self.prep_stream
         self.prep_stream = _st.filter(ftype, **kwargs)
+        if from_raw:
+            self._prep_tags = self._raw_tags
+        self._prep_tags.append('filter')
 
     def homogenize(
         self,
@@ -379,6 +424,9 @@ class Tracker:
         # Update prep_stream
         self.prep_stream = _st
         self._resamp_rate = samp_rate
+        if from_raw:
+            self._prep_tags = self._raw_tags
+        self._prep_tags.append('homogenized')
         return None
 
     def window(
@@ -408,16 +456,21 @@ class Tracker:
         :param npts_window: [int] number of data per window
         :param npts_step: [int] number of data per window advance
         :param detrend_type: [str] method used for detrending trace data
-                    once it has been trimmed. See obspy.core.trace.Trace.detrend().
-                    If a given trace has masked data, detrending is conducted with
-                    the following sequence:
+                    once it has been trimmed.
+                    See obspy.core.trace.Trace.detrend().
+                    If a given trace has masked data, detrending is conducted 
+                    with the following sequence:
                     detrended = _tr.copy().split().detrend(detrend_type).merge(method=1)
         :param chan_fill_method: [str] method for handling missing channels
-                    'zero_pad' - missing channels remain 0-vectors (e.g., Ni et al., 2023)
-                    'clone' - missing channels are cloned from existing channels
-                        If 1C (vertical only), vertical channel data are copied to both
-                        horizontals (e.g., Retailleau et al., 2021). If there is a dead
-                        horizontal channel, then the live horizontal channel is cloned.
+                    'zero_pad' - missing channels remain 0-vectors
+                            (e.g., Ni et al., 2023)
+                    'clone' - missing channels are cloned from existing
+                        channels.
+                        If 1C (vertical only), vertical channel data are
+                        copied to both horizontals 
+                            (e.g., Retailleau et al., 2021).
+                        If there is a dead horizontal channel, then the live
+                        horizontal channel is cloned.
         :param fill_value: [numpy.float32] fill value for masked elements in
                     self.prep_stream
         :param flush_streams: [bool]
@@ -434,86 +487,93 @@ class Tracker:
         :assign _last_raw_stream: populate/overwrite the `_last_raw_stream` attribute
         :assign last_t0: [obspy.core.utcdatetime.UTCDateTime]
                         populate/update attribute with the UTCDateTime of the first
-
+        :output success: [bool]
+                        if 1+ windows are generated, return True
+                        else, return False
         """
         if ~isinstance(fill_value, np.float32):
             fill_value = np.float32(fill_value)
         # Get metadata from prep_stream
         # Number of data
         npts_data = self.prep_stream[0].stats.npts
-        # Sampling rate
-        sr_data = self.prep_stream[0].stats.sampling_rate
-        # Starttime timestamp
-        T0 = self.prep_stream[0].stats.starttime
-        # Window length in seconds
-        sec_window = (npts_window - 1) / sr_data
-        # Window step in seconds
-        sec_step = npts_step / sr_data
-        # Get the number of complete windows
-        nwin = (npts_data - npts_window) // npts_step + 1
-        # Create windows holder
-        windows = np.zeros(shape=(nwin, 3, npts_window), dtype=np.float32)
-        # Iterate across windows:
-        # breakpoint()
-        for _n, _st in enumerate(
-            self.prep_stream.slide(sec_window, sec_step, include_partial_windows=False)
-        ):
-            if _n < nwin:
-                # Create holder stream
-                _st2 = _st.copy()
-                # Iterate across traces in slide generated _stream to preserve channel order
-                for _i, _tr in enumerate(_st2):
-                    # Handle masked streams
-                    if np.ma.is_masked(_tr.data):
-                        # Remove masked elements, detrend, and re-merge to Trace
-                        _tr = (
-                            _tr.split()
-                            .detrend(type=detrend_type, **options)
-                            .merge(fill_value=fill_value)[0]
-                        )
-                        # Re-enforce original time bounds in the event of lateral padding
-                        _tr.trim(
-                            starttime=_st[0].stats.starttime,
-                            endtime=_st[0].stats.endtime,
-                            pad=True,
-                        )
-                    # Do standard approach otherwise
-                    else:
-                        _tr.detrend(type=detrend_type, **options)
+        if npts_data >= npts_window:
+            # Sampling rate
+            sr_data = self.prep_stream[0].stats.sampling_rate
+            # Starttime timestamp
+            T0 = self.prep_stream[0].stats.starttime
+            # Window length in seconds
+            sec_window = (npts_window - 1) / sr_data
+            # Window step in seconds
+            sec_step = npts_step / sr_data
+            # Get the number of complete windows
+            nwin = (npts_data - npts_window) // npts_step + 1
+            # Create windows holder
+            windows = np.zeros(shape=(nwin, 3, npts_window), dtype=np.float32)
+            # Iterate across windows:
+            # breakpoint()
+            for _n, _st in enumerate(
+                self.prep_stream.slide(sec_window, sec_step, include_partial_windows=False)
+            ):
+                if _n < nwin:
+                    # Create holder stream
+                    _st2 = _st.copy()
+                    # Iterate across traces in slide generated _stream to preserve channel order
+                    for _i, _tr in enumerate(_st2):
+                        # Handle masked streams
+                        if np.ma.is_masked(_tr.data):
+                            # Remove masked elements, detrend, and re-merge to Trace
+                            _tr = (
+                                _tr.split()
+                                .detrend(type=detrend_type, **options)
+                                .merge(fill_value=fill_value)[0]
+                            )
+                            # Re-enforce original time bounds in the event of lateral padding
+                            _tr.trim(
+                                starttime=_st[0].stats.starttime,
+                                endtime=_st[0].stats.endtime,
+                                pad=True,
+                            )
+                        # Do standard approach otherwise
+                        else:
+                            _tr.detrend(type=detrend_type, **options)
 
-                    # Pull data vector
-                    _data = _tr.data
-                    # If data are masked, (re)apply fill_value
-                    if np.ma.is_masked(_data):
-                        _data.fill_value = fill_value
-                        # If so, use fill_value
-                        _data = np.ma.filled(_st[0].data.data)
-                    # And assign vector to windows
-                    windows[_n, _i, :] = _data
+                        # Pull data vector
+                        _data = _tr.data
+                        # If data are masked, (re)apply fill_value
+                        if np.ma.is_masked(_data):
+                            _data.fill_value = fill_value
+                            # If so, use fill_value
+                            _data = np.ma.filled(_st[0].data.data)
+                        # And assign vector to windows
+                        windows[_n, _i, :] = _data
 
-                # Catch case where length of _st is less than 3
-                if _i < 2:
-                    # If zero_pad, do nothing
-                    if chan_fill_method.casefold() in ["zero_pad", "zero"]:
-                        pass
-                    # If clone (after Retailleau et al., 2021)
-                    # NOTE: This formulation will clone Z data to both horizontals
-                    # if
-                    elif chan_fill_method.casefold() in ["clone", "duplicate"]:
-                        for _in in np.arange(_i + 1, 3):
-                            windows[_n, _i, :] = _data
+                    # Catch case where length of _st is less than 3
+                    if _i < 2:
+                        # If zero_pad, do nothing
+                        if chan_fill_method.casefold() in ["zero_pad", "zero"]:
+                            pass
+                        # If clone (after Retailleau et al., 2021)
+                        # NOTE: This formulation will clone Z data to both horizontals
+                        # if
+                        elif chan_fill_method.casefold() in ["clone", "duplicate"]:
+                            for _in in np.arange(_i + 1, 3):
+                                windows[_n, _i, :] = _data
 
-        # Update object attributes
-        self.windows = windows
-        self._last_t0 = T0
-        self._npts_window = npts_window
-        self._npts_step = npts_step
-        self._last_raw_stream = self.raw_stream.copy().trim(starttime=_tr.stats.starttime)
-
-        # Clear stream attributes if specified
-        if flush_streams:
-            self.raw_stream = self.last_raw_stream.copy()
-            self.prep_stream = Stream()
+            # Update object attributes
+            self.windows = windows
+            self._last_t0 = T0
+            self._npts_window = npts_window
+            self._npts_step = npts_step
+            self._last_raw_stream = self.raw_stream.copy().trim(starttime=_tr.stats.starttime)
+            self._window_tags.append('generated')
+            successful = True
+            # Clear stream attributes if specified
+            if flush_streams:
+                self.raw_stream = self.last_raw_stream.copy()
+                self.prep_stream = Stream()
+        else:
+            successful = False
+        return successful
 
     def normalize(self, method="max"):
         """
@@ -536,8 +596,10 @@ class Tracker:
         """
         if method.casefold() == "max":
             self.windows /= np.nanmax(np.abs(self.windows), axis=-1, keepdims=True)
+            self._window_tags.append('max scaled')
         elif method.casefold() == "std":
             self.windows /= np.nanstd(self.windows, axis=-1, keepdims=True)
+            self._window_tags.append('std scaled')
         else:
             pass
         return self.windows
@@ -558,6 +620,7 @@ class Tracker:
         taper = 0.5 * (1.0 + np.cos(np.linspace(np.pi, 2.0 * np.pi, npts_taper)))
         self.windows[:, :, :npts_taper] *= taper
         self.windows[:, :, -npts_taper:] *= taper[::-1]
+        self._window_tags.append('tapered')
         return self.windows
 
     def apply_config(self, config=None, verbose=False):
@@ -623,6 +686,94 @@ class Tracker:
                 return self.windows
         else:
             return None
+
+    ###########################
+    # POST PROCESSING METHODS #
+    ###########################
+    def ingest_predictions(self, predictions):
+        if isinstance(self._last_prediction_window, np.ndarray):
+            self.predictions = predictions
+            
+            
+            
+            
+            self._last_prediction_window = predictions[-1, :, :]
+
+
+
+    def prediction_to_traces(self):
+
+
+    ####################
+    # PLOTTING METHODS #
+    ####################
+    def _prep_comparison_stream(self):
+        _st = Stream()
+        if isinstance(self.raw_stream, Stream) and len(self.raw_stream) > 0:
+            _str = self.raw_stream.copy()
+            for _tr in _str:
+                _tr.stats.location = "(r)"
+                _st += _tr
+        if isinstance(self.prep_stream, Stream) and len(self.prep_stream) > 0:
+            _stp = self.prep_stream.copy()
+            for _tr in _stp:
+                _tr.stats.location = "(p)"
+                _st += _tr
+        if isinstance(self.pred_stream, Stream) and len(self.pred_stream) > 0:
+            _stx = self.pred_stream.copy()
+            for _tr in _stx:
+                _st += _tr
+        return _st
+
+    def plot(self, *args, **kwargs):
+        """
+        Use Obspy Plotting utilties to visualize contents of a Tracker
+
+        Plot a temporary copy of contents of self.raw_stream and
+        self.prep_stream with appended channel codes (r) and (p)
+        respectively. Uses the syntax of obspy.core.stream.Stream.plot()
+
+        :: INPUTS ::
+        :param *args: Gather positional arguments to pass to Stream.plot()
+        :param **kwargs: Gather key-word arguments to pass to Stream.plot()
+
+        :: OUTPUT ::
+        :return outs: Standard output from Stream.plot()
+        """
+        _st = self._prep_comparison_stream()
+
+        outs = _st.sort(keys=["channel"], reverse=True).plot(*args, **kwargs)
+        return outs
+
+    def _snuffle(self, *args, **kwargs):
+        """
+        Use Pyrocko Plotting utilities to visualize contents of a Tracker
+
+        Provide a way to view Stream-formatted contents of a Tracker
+        using the pyrocko.obspy_compat extension to Stream class-methods
+        Stream.snuffle().
+
+        Runs 
+            from pyrocko import obspy_compat
+            obspy_compat.plant() 
+        if Stream.snuffle() returns AttributeError.
+
+        :: INPUTS ::
+        :param *args: Collect positional arguments for Stream.snuffle()
+        :param **kwargs: Collect key-word arguments for Stream.snuffle()
+
+        :: OUTPUT ::
+        :return outs: Return standard out of Stream.snuffle()
+        """
+        _st = self._prep_comparison_stream()
+        try:
+            outs = _st.snuffle(*args, **kwargs)
+        except AttributeError:
+            from pyrocko import obspy_compat
+            obspy_compat.plant()
+            outs = _st.snuffle(*args, **kwargs)
+        return outs
+
 
     # ################################
     # # POSTPROCESSING CLASS-METHODS #
