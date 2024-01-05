@@ -1,14 +1,29 @@
 # Sci-Prod-ML
-PNSN Science Products team Machine Learning workflows/utilities
+PNSN Science Products team Machine Learning workflows/utilities development space
+
+This repository acts as a development space / testing ground for machine-learning enhancement of seismic analysis workflows for the Pacific Northwest Seismic Network (PNSN). Content will largely remain in `feature` and `develop` branches due to the experimental nature of these code snippets. 
+
+Realistically, code chunks developed in this space that have reasonable operational connections will be extracted as seeds for initial `develop` and `main` branches on more-focused repositories in the PNSN code space.
+
+-Nate Stevens (Dec 2023)
 
 # Installation
-This repository currently uses a minimal installation of `SeisBench` that can be installed via `conda` by invoking: 
+
+The current dependency set for this repository can be installed on an Apple M2 chipset with:  
+`conda create -f environments/env_dev_apple_silicon.yml`  
+
+Some modifications (or omissions) on channels and specific versioning may be necessary for installation on other operating systems and hardware.
+
+# Other (older) installation recipes via YAML  
+
+This repository provides uses a minimal installation of `SeisBench` that can be installed via `conda` by invoking: 
 
 `conda create -f environments/seisbench_lite_env.yml`  
 
-Testing on Apple M1/M2 chipsets suggests the following modified invocation is needed for a successful installation:  
+Testing on Apple M1 chipsets suggests the following modified invocation is needed for a successful installation in conjunction with a `miniforge` installation:  
 
 `CONDA_SUBDIR=osx-arm64 conda env create -f environments/seisbench_lite_env.yml`
+
 
 # Contents
 ### environments/
